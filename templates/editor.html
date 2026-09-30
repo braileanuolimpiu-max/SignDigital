@@ -457,7 +457,17 @@
             canvas.requestRenderAll();
         });
     });
+    let isReloading = false;
+
+    window.addEventListener('keydown', function(event) {
+        if (event.key === 'F5' || ((event.ctrlKey || event.metaKey) && (event.key === 'r' || event.key === 'R'))) {
+            isReloading = true;
+        }
+    });
+
     window.addEventListener('pagehide', function() {
+        if (isReloading) return;
+
         let url = "/track-leave/";
         let formData = new FormData();
         formData.append("action", "left_page");
