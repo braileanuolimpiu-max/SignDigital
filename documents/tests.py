@@ -46,14 +46,8 @@ class EditorPdfTest(TestCase):
 
         self.assertEqual(response.status_code, 204)
 
-        # Leaving only marks the document so a reload can still cancel it.
-        self.assertTrue(self.client.session.get("pending_delete"))
-        self.assertTrue(Pdffile.objects.filter(id=self.pdf_file.id).exists())
+        self.assertFalse(Image.objects.filter(id=self.pdf_file.id).exists())
 
-        # Going back to the homepage is what actually cleans it up.
-        self.client.get(reverse("homepage"))
-
-        self.assertFalse(Pdffile.objects.filter(id=self.pdf_file.id).exists())
         self.assertNotIn("active_doc_id", self.client.session)
         self.assertNotIn("active_doc_type", self.client.session)
 
@@ -81,11 +75,7 @@ class EditorImgTest(TestCase):
 
         self.assertEqual(response.status_code, 204)
 
-        self.assertTrue(self.client.session.get("pending_delete"))
-        self.assertTrue(Image.objects.filter(id=self.img_file.id).exists())
-
-        self.client.get(reverse("homepage"))
-
         self.assertFalse(Image.objects.filter(id=self.img_file.id).exists())
+
         self.assertNotIn("active_doc_id", self.client.session)
         self.assertNotIn("active_doc_type", self.client.session)

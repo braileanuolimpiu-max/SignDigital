@@ -6,36 +6,7 @@ from django.views.decorators.csrf import csrf_exempt
 from pypdf import PdfReader
 from django.contrib import messages
 
-def delete_active_document(request):
-    doc_id = request.session.get('active_doc_id')
-    doc_type = request.session.get('active_doc_type')
-
-    if doc_id and doc_type:
-        try:
-            if doc_type == 'pdf':
-                document = Pdffile.objects.get(id=doc_id)
-                if document.pdf:
-                    document.pdf.delete(save=False)
-                if document.coverpage:
-                    document.coverpage.delete(save=False)
-                document.delete()
-            elif doc_type == 'img':
-                document = Image.objects.get(id=doc_id)
-                if document.file:
-                    document.file.delete(save=False)
-                document.delete()
-        except (Pdffile.DoesNotExist, Image.DoesNotExist):
-            pass
-
-    request.session.pop('active_doc_id', None)
-    request.session.pop('active_doc_type', None)
-    request.session.pop('pending_delete', None)
-
-
 def homepage(request):
-    if request.session.pop('pending_delete', False):
-        delete_active_document(request)
-
     form = HomeForm()
     if request.method == 'POST':
         form = HomeForm(request.POST, request.FILES)
@@ -75,8 +46,6 @@ def signature_workspace(request, doc_id):
     if doc_id != request.session.get('active_doc_id'):
         return redirect('homepage')
 
-    request.session.pop('pending_delete', None)
-
     if request.session.get('active_doc_type') == 'pdf':
         document = get_object_or_404(Pdffile, id=doc_id)
         pdf_field = document.pdf
@@ -109,8 +78,27 @@ def user_left_page(request):
         action = request.POST.get('action')
 
         if action == 'left_page':
-            if request.session.get('active_doc_id'):
-                request.session['pending_delete'] = True
+            doc_id = request.session.get('active_doc_id')
+            doc_type = request.session.get('active_doc_type')
+
+            if doc_id and doc_type:
+                if doc_type == 'pdf':
+                    document = Pdffile.objects.get(id=doc_id)
+                    if document.pdf:
+                        document.pdf.delete(save=False)
+                    if document.coverpage:
+                        document.coverpage.delete(save=False)
+                    document.delete()
+
+                elif doc_type == 'img':
+                    document = Image.objects.get(id=doc_id)
+                    if document.file:
+                        document.file.delete(save=False)
+                    document.delete()
+
+                del request.session['active_doc_id']
+                del request.session['active_doc_type']
+
                 return HttpResponse(status=204)
 
             return redirect('homepage')
