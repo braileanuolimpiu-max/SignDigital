@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <title>Spațiu de Semnare</title>
+    <script src="https://cdn.jsdelivr.net/npm/fabric@latest/dist/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #f4f7f6;
+            display: flex;
+            flex-direction: column;
+        }
+        .info-panel {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            gap: 20px;
+            background: white;
+            padding: 12px 18px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            flex-shrink: 0;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        }
+        .toolbar-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .toolbar-group + .toolbar-group {
+            padding-left: 20px;
+            border-left: 1px solid #e5e7eb;
+        }
+        .group-label {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #9ca3af;
+        }
+        .group-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .info-panel button {
+            font: inherit;
+            font-size: 13px;
+            padding: 6px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+            transition: background 0.12s, border-color 0.12s;
+        }
+        .info-panel button:hover {
+            background: #f3f4f6;
+            border-color: #9ca3af;
+        }
+        .info-panel button:active {
+            background: #e5e7eb;
+        }
+        .info-panel button.primary {
+            background: #2563eb;
+            border-color: #2563eb;
+            color: #fff;
+        }
+        .info-panel button.primary:hover {
+            background: #1d4ed8;
+            border-color: #1d4ed8;
+        }
+        .info-panel select {
+            font: inherit;
+            font-size: 13px;
+            padding: 6px 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .info-panel a {
+            font-size: 13px;
+            color: #2563eb;
+            text-decoration: none;
+        }
+        .info-panel a:hover {
+            text-decoration: underline;
+        }
+        .spacer {
+            margin-left: auto;
+        }
+        .canvas-wrapper {
+
+            width: 100%;
+            flex-grow: 1;
+            position: relative;
+            background: #F5F5F5;
+        }
+        canvas {
+            display: block;
+        }
+        .input-color {
+            display: inline-flex;
+        }
+        input[type="color"] {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 34px;
+          height: 32px;
+          padding: 0;
+          border: 1px solid #d1d5db;
+          border-radius: 6px;
+          cursor: pointer;
+          background: none;
+      }
+      input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+      input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
+      input[type="color"]::-moz-color-swatch     { border: none; border-radius: 4px; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Monsieur+La+Doulaise&family=Mr+De+Haviland&family=Luxurious+Script&display=swap" rel="stylesheet"></head>
+<body>
+    <div class="info-panel">
+        <div class="toolbar-group">
+            <span class="group-label">Text</span>
+            <div class="group-controls">
+                <button type="button" onclick="AddText()">Add Text</button>
+                <button type="button" onclick="Bold()">Bold</button>
+                <button type="button" onclick="Italic()">Italic</button>
+                <button type="button" onclick="Underline()">Underline</button>
+                <select id="FontMenu">
+                    <option value="CourierNew" selected="selected">CourierNew</option>
+                    <option value="TimesNewRoman">TimesNewRoman</option>
+                    <option value="SansSerif">Sans-serif</option>
+                    <option value="Arial">Arial</option>
+                    <option value="MonsieurLaDoulaise">Monsieur La Doulaise</option>
+                    <option value="MrDeHaviland">Mr De Haviland</option>
+                    <option value="LuxuriousScript">Luxurious Script</option>
+                </select>
+                <div class="input-color">
+                    <input type="color" id="TextColor" value="#000000" title="Text color">
+                </div>
+            </div>
+        </div>
+
+        <div class="toolbar-group">
+            <span class="group-label">Drawing</span>
+            <div class="group-controls">
+                <button type="button" onclick="DrawingMode()">Drawing</button>
+                <button type="button" onclick="Erase()">Erase all</button>
+                <div class="input-color">
+                    <input type="color" id="DrawColor" value="#000000" title="Brush color">
+                </div>
+                <input id="ColorBar" type="range" value="2" min="1" max="20" style="display: none;" oninput="this.nextElementSibling.value = this.value;">
+                <output id = "out" style="display: none;">2</output>
+            </div>
+        </div>
+        <div class="toolbar-group spacer">
+            <span class="group-label">Document</span>
+            <div class="group-controls">
+                <a href="{{ original_url }}" target="_blank">Open original</a>
+                <button type="button" class="primary" onclick="exportCanvasToPDF(canvas)">Export</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="canvas-wrapper" id="wrapper">
+        <canvas id="canvasEl"></canvas>
+    </div>
+
+<script>
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+            const activeObject = canvas.getActiveObject();
+
+            if (activeObject) {
+                if (activeObject.isEditing) {
+                    return;
+                }
+                canvas.getActiveObjects().forEach((obj) => {
+                    canvas.remove(obj);
+                });
+
+                canvas.discardActiveObject();
+                canvas.renderAll();
+            }
+        }
+    });
+
+    function exportCanvasToPDF(fabricCanvas) {
+      const { jsPDF } = window.jspdf;
+      const img = fabricCanvas.getObjects('image')[0];
+      if (!img) return;
+
+      const rect = img.getBoundingRect();
+      const w = rect.width, h = rect.height;
+
+      const dataUrl = fabricCanvas.toDataURL({
+          format: 'png',
+          multiplier: 2,
+          left: rect.left,
+          top: rect.top,
+          width: w,
+          height: h
+      });
+
+      const pdf = new jsPDF({
+          orientation: w >= h ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [w, h]
+      });
+      pdf.addImage(dataUrl, 'PNG', 0, 0, w, h);
+      pdf.save('{{filename}}.pdf');
+  }
+
+    let canvas;
+
+    let textCounter = 0;
+
+    function AddText(){
+        if (!canvas) return;
+        const currentWidth  = canvas.getWidth();
+        const currentHeight = canvas.getHeight();
+
+        textCounter++;
+        const newTextElement = new fabric.IText('Semnatura ' + textCounter, {
+            id: 'text_' + textCounter,
+            originX: 'left',
+            originY: 'top',
+            left: (currentWidth / 2) - 50,
+            top: currentHeight - 160,
+            fontSize: 14,
+            fill: document.getElementById('TextColor').value,
+            fontFamily: 'Courier New'
+        });
+
+        canvas.add(newTextElement);
+        canvas.setActiveObject(newTextElement);
+        canvas.requestRenderAll();
+    }
+
+    function Bold() {
+        const activeObject = canvas.getActiveObject();
+        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
+            const isBold = activeObject.get('fontWeight') === 'bold';
+            activeObject.set('fontWeight', !isBold ? 'bold' : 'normal');
+            canvas.requestRenderAll();
+        }
+    }
+    function Italic() {
+        const activeObject = canvas.getActiveObject();
+        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
+            const isItalic = activeObject.get('fontStyle') === 'Italic';
+            activeObject.set('fontStyle', !isItalic ? 'Italic' : 'normal');
+            canvas.requestRenderAll();
+        }
+    }
+    function Underline() {
+        const activeObject = canvas.getActiveObject();
+        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
+            const isCurrentlyUnderlined = activeObject.get('underline');
+            activeObject.set('underline', !isCurrentlyUnderlined);
+            canvas.requestRenderAll();
+        }
+    }
+    var bar = document.getElementById("ColorBar");
+    var out = document.getElementById("out");
+    function DrawingMode(){
+          if (!canvas) return;
+          canvas.isDrawingMode = !canvas.isDrawingMode;
+          if(canvas.isDrawingMode){
+              bar.style.display = "inline";
+              out.style.display = "inline";
+          }
+          else {
+              bar.style.display = "none";
+              out.style.display = "none";
+          }
+          if (canvas.isDrawingMode && !canvas.freeDrawingBrush) {
+              canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+              canvas.freeDrawingBrush.color =  document.getElementById('DrawColor').value;
+              canvas.freeDrawingBrush.width = 2;
+          }
+    }
+    bar.addEventListener('change', function(e) {
+        if (canvas.isDrawingMode && canvas.freeDrawingBrush){
+            canvas.freeDrawingBrush.width = parseInt(e.target.value, 10);
+        }
+    })
+    function Erase(){
+        if (!canvas) return;
+        canvas.getObjects('path').forEach(o => canvas.remove(o));
+        canvas.requestRenderAll();
+    }
+    document.getElementById('TextColor').addEventListener('input', e => {
+        const activeObject = canvas.getActiveObject();
+        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
+            activeObject.set('fill', e.target.value);
+            canvas.requestRenderAll();
+        }
+    });
+    document.getElementById('DrawColor').addEventListener('input', e => {
+        canvas.freeDrawingBrush.color = e.target.value;
+    });
+    var FontMenu = document.getElementById('FontMenu');
+
+    FontMenu.addEventListener('change', function(e) {
+        if (!canvas) return;
+        var activeObject = canvas.getActiveObject();
+        if (!activeObject || (activeObject.type !== 'i-text' && activeObject.type !== 'text')) {
+            return;
+        }
+
+        var opt = FontMenu.value;
+        switch (opt) {
+            case "CourierNew":
+                activeObject.set({fontFamily: 'Courier New', padding: 15, fontSize: 10});
+                activeObject.initDimensions();
+                activeObject.setCoords();
+                canvas.requestRenderAll();
+                break;
+            case "TimesNewRoman":
+                activeObject.set({fontFamily: 'Times New Roman', padding: 15, fontSize: 10});
+                activeObject.initDimensions();
+                activeObject.setCoords();
+                canvas.requestRenderAll();
+                break;
+            case "SansSerif":
+                activeObject.set({fontFamily: 'sans-serif', padding: 15, fontSize: 10});
+                activeObject.initDimensions();
+                activeObject.setCoords();
+                canvas.requestRenderAll();
+                break;
+            case "Arial":
+                activeObject.set({fontFamily: 'Arial', padding: 15, fontSize: 10});
+                activeObject.initDimensions();
+                activeObject.setCoords();
+                canvas.requestRenderAll();
+                break;
+            case "MonsieurLaDoulaise":
+                document.fonts.load('1em "Monsieur La Doulaise"').then(function() {
+                    activeObject.set({ fontFamily: 'Monsieur La Doulaise', padding: 20, fontSize: 25});
+                    activeObject.initDimensions();
+                    activeObject.setCoords();
+                    canvas.requestRenderAll();
+                }).catch(err => console.error("Font failed to parse:", err));
+                break;
+            case "MrDeHaviland":
+                document.fonts.load('1em "Mr De Haviland"').then(function() {
+                    activeObject.set({ fontFamily: 'Mr De Haviland', padding: 20, fontSize: 25});
+                    activeObject.initDimensions();
+                    activeObject.setCoords();
+                    canvas.requestRenderAll();
+                }).catch(err => console.error("Font failed to parse:", err));
+                break;
+            case "LuxuriousScript":
+                document.fonts.load('1em "Luxurious Script"').then(function() {
+                    activeObject.set({ fontFamily: 'Luxurious Script', padding: 20, fontSize: 25});
+                    activeObject.initDimensions();
+                    activeObject.setCoords();
+                    canvas.requestRenderAll();
+                }).catch(err => console.error("Font failed to parse:", err));
+                break;
+        }
+
+    }, false);
+
+    window.addEventListener('DOMContentLoaded', () => {
+        const wrapper = document.getElementById('wrapper');
+        const latimeInitiala = wrapper.clientWidth;
+        const inaltimeInitiala = wrapper.clientHeight;
+
+        const htmlCanvas = document.getElementById('canvasEl');
+        htmlCanvas.width = latimeInitiala;
+        htmlCanvas.height = inaltimeInitiala;
+
+        canvas = new fabric.Canvas('canvasEl');
+
+        fabric.InteractiveFabricObject.ownDefaults = {
+            ...fabric.InteractiveFabricObject.ownDefaults,
+            cornerStyle: 'circle',
+            cornerSize: 9,
+            cornerColor: '#0096FF',
+            padding: 8,
+            transparentCorners: false,
+            borderColor: 'lightblue',
+            borderScaleFactor: 2,
+        };
+
+        function curataSiReconstruiesteUrl(urlBrut) {
+            let caleCurata = urlBrut;
+            const indexMedia = urlBrut.indexOf('/media/');
+            if (indexMedia !== -1) {
+                caleCurata = urlBrut.substring(indexMedia);
+            }
+            return window.location.origin + caleCurata;
+        }
+
+        const backgroundImageUrl = curataSiReconstruiesteUrl("{{ background_url }}");
+        let fabricImgInstance = null;
+
+        function pozitioneazaImaginea() {
+            if (!fabricImgInstance) return;
+
+            const currentWidth = wrapper.clientWidth;
+            const currentHeight = wrapper.clientHeight;
+            const imgW = fabricImgInstance.width;
+            const imgH = fabricImgInstance.height;
+
+            const MAX_W = 800,  MAX_H = 1100;
+            const MIN_W = 250,  MIN_H = 250;
+
+            let scaleFactor = Math.min(currentWidth / imgW, currentHeight / imgH);
+
+            scaleFactor = Math.min(scaleFactor, MAX_W / imgW, MAX_H / imgH);
+
+            scaleFactor = Math.max(scaleFactor, MIN_W / imgW, MIN_H / imgH);
+
+            fabricImgInstance.set({ scaleX: scaleFactor, scaleY: scaleFactor });
+            canvas.centerObject(fabricImgInstance);
+            fabricImgInstance.setCoords();
+        }
+
+        const nativeImg = new Image();
+        nativeImg.crossOrigin = 'anonymous';
+        nativeImg.src = backgroundImageUrl;
+
+        nativeImg.onload = () => {
+            fabricImgInstance = new fabric.FabricImage(nativeImg, {
+                selectable: false,
+                evented: false
+            });
+
+            pozitioneazaImaginea();
+
+            canvas.add(fabricImgInstance);
+            canvas.sendObjectToBack(fabricImgInstance);
+
+            canvas.requestRenderAll();
+        };
+
+        window.addEventListener('resize', () => {
+            const currentWidth = wrapper.clientWidth;
+            const currentHeight = wrapper.clientHeight;
+
+            canvas.setDimensions({ width: currentWidth, height: currentHeight });
+
+            pozitioneazaImaginea();
+            canvas.requestRenderAll();
+        });
+    });
+    window.addEventListener('pagehide', function() {
+        let url = "/track-leave/";
+        let formData = new FormData();
+        formData.append("action", "left_page");
+
+        navigator.sendBeacon(url, formData);
+    });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "fabric": "^7.4.0"
+  }
+}

@@ -1,0 +1,4 @@
+Django==6.1.1
+pypdf==6.19.0
+pdf2image==1.17.0
+pillow==12.3.0
