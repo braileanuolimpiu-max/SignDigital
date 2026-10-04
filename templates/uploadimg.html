@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Upload the Image</title>
     <style>
         html, body {
@@ -74,6 +75,27 @@
         button:hover {
             background: #1d4ed8;
             border-color: #1d4ed8;
+        }
+        @media (max-width: 600px) {
+            .card {
+                width: 100%;
+                max-width: calc(100% - 24px);
+                padding: 28px 22px;
+            }
+            h2 {
+                font-size: 22px;
+            }
+            form label {
+                font-size: 13px;
+            }
+            form input, form select, form textarea {
+                font-size: 16px;
+                padding: 13px;
+            }
+            button {
+                font-size: 17px;
+                padding: 15px;
+            }
         }
     </style>
 </head>

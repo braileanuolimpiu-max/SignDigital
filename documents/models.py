@@ -5,7 +5,6 @@ from django.http import JsonResponse
 from pdf2image import convert_from_path
 from django.conf import settings
 import os
-from pypdf import PdfReader
 
 COVER_PAGE_DIRECTORY = 'coverdirectory/'
 PDF_DIRECTORY = 'pdfdirectory/'
@@ -34,14 +33,6 @@ class Pdffile(models.Model):
     filename = models.CharField(max_length=50)
     pagenumforcover = models.IntegerField(validators=[MinValueValidator(1)])
     coverpage = models.FileField(upload_to=set_cover_file_name)
-
-# def number_of_pages(instance):
-#     pdf_field = instance.pdf_file
-#
-#     with pdf_field.open("rb") as f:
-#         reader = PdfReader(f)
-#         page_count = len(reader.pages)
-#     return page_count
 def convert_pdf_to_image(instance, created, **kwargs):
     if created:
         cover_page_dir = os.path.join(settings.MEDIA_ROOT, COVER_PAGE_DIRECTORY)
