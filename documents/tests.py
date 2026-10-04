@@ -1,11 +1,9 @@
 import re
 
-from django.http import response
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.models.signals import post_save
 from django.urls import reverse
-from .views import user_left_page
 from .models import Pdffile, convert_pdf_to_image, Image
 
 class EditorPdfTest(TestCase):
