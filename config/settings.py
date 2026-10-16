@@ -123,12 +123,42 @@ STATIC_URL = 'static/'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
 import os
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 POPPLER_PATH = r"C:\Users\cated\AppData\Local\Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\poppler-25.07.0\Library\bin"
+LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.com"
+MAX_UPLOAD_SIZE = 20 * 1024 * 1024
+MAX_PAGES = 50
+
+SITE_URL = 'http://127.0.0.1:8000'
+GMAIL_ADDRESS = ''
+GMAIL_APP_PASSWORD = ''
+
+if os.path.exists(os.path.join(BASE_DIR, 'config', 'local_settings.py')):
+    from .local_settings import SITE_URL, GMAIL_ADDRESS, GMAIL_APP_PASSWORD
+
+if GMAIL_ADDRESS:
+    DEFAULT_FROM_EMAIL = GMAIL_ADDRESS
+else:
+    DEFAULT_FROM_EMAIL = 'signelectric@localhost'
+
+if GMAIL_APP_PASSWORD:
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
+            'OPTIONS': {
+                'host': 'smtp.gmail.com',
+                'port': 587,
+                'use_tls': True,
+                'username': GMAIL_ADDRESS,
+                'password': GMAIL_APP_PASSWORD,
+            },
+        },
+    }
+else:
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        },
+    }

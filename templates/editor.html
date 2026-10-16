@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Spațiu de Semnare</title>
-    <script src="https://cdn.jsdelivr.net/npm/fabric@latest/dist/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <style>
         html, body {
@@ -67,6 +67,20 @@
         .info-panel button:active {
             background: #e5e7eb;
         }
+        .info-panel button:disabled,
+        .info-panel button.primary:disabled,
+        .info-panel button.primary:disabled:hover,
+        .info-panel button:disabled:hover {
+            background: #e5e7eb;
+            border-color: #e5e7eb;
+            color: #9ca3af;
+            cursor: not-allowed;
+        }
+        .info-panel button.toggled {
+            background: #dbeafe;
+            border-color: #2563eb;
+            color: #1d4ed8;
+        }
         .info-panel button.primary {
             background: #2563eb;
             border-color: #2563eb;
@@ -98,13 +112,26 @@
             margin-left: auto;
         }
         .canvas-wrapper {
-
             width: 100%;
             flex-grow: 1;
             min-height: 0;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
             position: relative;
             background: #F5F5F5;
+            padding: 24px 0;
+            box-sizing: border-box;
+        }
+        .page {
+            width: fit-content;
+            margin: 0 auto 24px;
+            background: #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+            outline: 2px solid transparent;
+            transition: outline-color 0.12s;
+        }
+        .page.active {
+            outline-color: #93c5fd;
         }
         canvas {
             display: block;
@@ -152,6 +179,97 @@
                 height: 42px;
             }
         }
+        dialog {
+            border: none;
+            border-radius: 10px;
+            padding: 24px;
+            width: 340px;
+            max-width: calc(100% - 32px);
+            box-sizing: border-box;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            color: #374151;
+        }
+        dialog::backdrop {
+            background: rgba(0,0,0,0.35);
+        }
+        dialog h3 {
+            margin: 0 0 16px;
+            font-size: 17px;
+            color: #111827;
+        }
+        dialog label {
+            display: block;
+            margin-bottom: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #9ca3af;
+        }
+        dialog input,
+        dialog select {
+            display: block;
+            width: 100%;
+            margin-top: 6px;
+            box-sizing: border-box;
+            font: inherit;
+            font-size: 14px;
+            text-transform: none;
+            letter-spacing: normal;
+            padding: 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            color: #374151;
+        }
+        dialog input[type="color"] {
+            width: 48px;
+            height: 38px;
+            padding: 2px;
+        }
+        .dialog-field {
+            margin-bottom: 12px;
+        }
+        .field-name {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #9ca3af;
+        }
+        .dialog-error {
+            min-height: 18px;
+            margin: 0 0 12px;
+            font-size: 13px;
+            color: #b91c1c;
+        }
+        .dialog-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .dialog-buttons button {
+            font: inherit;
+            font-size: 14px;
+            padding: 8px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #ffffff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .dialog-buttons button.primary {
+            background: #2563eb;
+            border-color: #2563eb;
+            color: #ffffff;
+        }
+        .dialog-buttons button:disabled {
+            background: #e5e7eb;
+            border-color: #e5e7eb;
+            color: #9ca3af;
+            cursor: not-allowed;
+        }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -162,16 +280,13 @@
             <span class="group-label">Text</span>
             <div class="group-controls">
                 <button type="button" onclick="AddText()">Add Text</button>
-                <button type="button" onclick="Bold()">Bold</button>
-                <button type="button" onclick="Italic()">Italic</button>
-                <button type="button" onclick="Underline()">Underline</button>
                 <select id="FontMenu">
-                    <option value="CourierNew" selected="selected">CourierNew</option>
+                    <option value="CourierNew">CourierNew</option>
                     <option value="TimesNewRoman">TimesNewRoman</option>
                     <option value="SansSerif">Sans-serif</option>
                     <option value="Arial">Arial</option>
                     <option value="MonsieurLaDoulaise">Monsieur La Doulaise</option>
-                    <option value="MrDeHaviland">Mr De Haviland</option>
+                    <option value="MrDeHaviland" selected>Mr De Haviland</option>
                     <option value="LuxuriousScript">Luxurious Script</option>
                 </select>
                 <div class="input-color">
@@ -183,8 +298,8 @@
         <div class="toolbar-group">
             <span class="group-label">Drawing</span>
             <div class="group-controls">
-                <button type="button" onclick="DrawingMode()">Drawing</button>
-                <button type="button" onclick="Erase()">Erase all</button>
+                <button type="button" id="DrawingButton" onclick="DrawingMode()">Drawing</button>
+                <button type="button" onclick="Erase()">Erase page</button>
                 <div class="input-color">
                     <input type="color" id="DrawColor" value="#000000" title="Brush color">
                 </div>
@@ -192,319 +307,654 @@
                 <output id = "out" style="display: none;">2</output>
             </div>
         </div>
+        {% if mode == 'multi' %}
+        <div class="toolbar-group">
+            <span class="group-label">Signers</span>
+            <div class="group-controls">
+                <button type="button" onclick="AddPlaceholder()">Add placeholder</button>
+                <button type="button" onclick="EditPlaceholder()">Edit placeholder</button>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="toolbar-group spacer">
             <span class="group-label">Document</span>
             <div class="group-controls">
                 <a href="{{ original_url }}" target="_blank">Open original</a>
-                <button type="button" class="primary" onclick="exportCanvasToPDF(canvas)">Export</button>
+                {% if mode == 'multi' %}
+                <button type="button" class="primary" id="FinishButton" onclick="OpenSendDialog()" disabled>Sign &amp; send</button>
+                {% else %}
+                <button type="button" class="primary" id="FinishButton" onclick="ExportPDF()" disabled>Export</button>
+                {% endif %}
             </div>
         </div>
     </div>
 
-    <div class="canvas-wrapper" id="wrapper">
-        <canvas id="canvasEl"></canvas>
-    </div>
+    <dialog id="PlaceholderDialog">
+        <h3>Who signs here?</h3>
+        <label>Name
+            <input type="text" id="PlaceholderName" maxlength="100">
+        </label>
+        <label>Email
+            <input type="email" id="PlaceholderEmail">
+        </label>
+        <label>Signing font
+            <select id="PlaceholderFont">
+                <option value="CourierNew">CourierNew</option>
+                <option value="TimesNewRoman">TimesNewRoman</option>
+                <option value="SansSerif">Sans-serif</option>
+                <option value="Arial">Arial</option>
+                <option value="MonsieurLaDoulaise">Monsieur La Doulaise</option>
+                <option value="MrDeHaviland" selected>Mr De Haviland</option>
+                <option value="LuxuriousScript">Luxurious Script</option>
+            </select>
+        </label>
+        <div class="dialog-field">
+            <span class="field-name">Color</span>
+            <input type="color" id="PlaceholderColor" value="#1e3a8a">
+        </div>
+        <p class="dialog-error" id="PlaceholderError"></p>
+        <div class="dialog-buttons">
+            <button type="button" onclick="CancelPlaceholder()">Cancel</button>
+            <button type="button" class="primary" onclick="SavePlaceholder()">Save</button>
+        </div>
+    </dialog>
+
+    <dialog id="SendDialog">
+        <h3>Send for signing</h3>
+        <label>Your email
+            <input type="email" id="SenderEmail">
+        </label>
+        <p class="dialog-error" id="SendError"></p>
+        <div class="dialog-buttons">
+            <button type="button" onclick="CloseSendDialog()">Cancel</button>
+            <button type="button" class="primary" id="SendButton" onclick="SendForSigning()">Send</button>
+        </div>
+    </dialog>
+
+    <div class="canvas-wrapper" id="wrapper"></div>
+
+    {{ editor_data|json_script:"editor-data" }}
 
 <script>
-    window.addEventListener('keydown', (event) => {
-        if (event.key === 'Delete' || event.key === 'Backspace') {
-            const activeObject = canvas.getActiveObject();
+    const MAX_PAGE_WIDTH = 800;
+    const PAGE_SIDE_GUTTER = 16;
+    const POINTS_PER_INCH = 72;
+    const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 
-            if (activeObject) {
-                if (activeObject.isEditing) {
-                    return;
-                }
-                canvas.getActiveObjects().forEach((obj) => {
-                    canvas.remove(obj);
-                });
+    const FONTS = {
+        CourierNew:         { family: 'Courier New',          size: 14, webFont: false },
+        TimesNewRoman:      { family: 'Times New Roman',      size: 14, webFont: false },
+        SansSerif:          { family: 'sans-serif',           size: 14, webFont: false },
+        Arial:              { family: 'Arial',                size: 14, webFont: false },
+        MonsieurLaDoulaise: { family: 'Monsieur La Doulaise', size: 25, webFont: true },
+        MrDeHaviland:       { family: 'Mr De Haviland',       size: 25, webFont: true },
+        LuxuriousScript:    { family: 'Luxurious Script',     size: 25, webFont: true },
+    };
 
-                canvas.discardActiveObject();
-                canvas.renderAll();
-            }
-        }
-    });
+    const editorData = JSON.parse(document.getElementById('editor-data').textContent);
+    const wrapper = document.getElementById('wrapper');
+    const fontMenu = document.getElementById('FontMenu');
+    const textColorInput = document.getElementById('TextColor');
+    const drawColorInput = document.getElementById('DrawColor');
+    const brushSizeInput = document.getElementById('ColorBar');
+    const brushSizeLabel = document.getElementById('out');
+    const drawingButton = document.getElementById('DrawingButton');
+    const finishButton = document.getElementById('FinishButton');
+    const csrfToken = '{{ csrf_token }}';
 
-    function exportCanvasToPDF(fabricCanvas) {
-      const { jsPDF } = window.jspdf;
-      const img = fabricCanvas.getObjects('image')[0];
-      if (!img) return;
-
-      const rect = img.getBoundingRect();
-      const w = rect.width, h = rect.height;
-
-      const dataUrl = fabricCanvas.toDataURL({
-          format: 'png',
-          multiplier: 2,
-          left: rect.left,
-          top: rect.top,
-          width: w,
-          height: h
-      });
-
-      const pdf = new jsPDF({
-          orientation: w >= h ? 'landscape' : 'portrait',
-          unit: 'px',
-          format: [w, h]
-      });
-      pdf.addImage(dataUrl, 'PNG', 0, 0, w, h);
-      pdf.save('{{filename}}.pdf');
-  }
-
-    let canvas;
-
+    const pageCanvases = [];
+    let canvas = null;
+    let drawingMode = false;
     let textCounter = 0;
+    let loadedPages = 0;
 
-    function AddText(){
-        if (!canvas) return;
-        const currentWidth  = canvas.getWidth();
-        const currentHeight = canvas.getHeight();
+    const handleStyle = fabric.InteractiveFabricObject.ownDefaults;
+    handleStyle.cornerStyle = 'circle';
+    handleStyle.cornerSize = 9;
+    handleStyle.cornerColor = '#0096FF';
+    handleStyle.padding = 8;
+    handleStyle.transparentCorners = false;
+    handleStyle.borderColor = 'lightblue';
+    handleStyle.borderScaleFactor = 2;
 
-        textCounter++;
-        const newTextElement = new fabric.IText('Semnatura ' + textCounter, {
-            id: 'text_' + textCounter,
-            originX: 'left',
-            originY: 'top',
-            left: (currentWidth / 2) - 50,
-            top: currentHeight - 160,
-            fontSize: 14,
-            fill: document.getElementById('TextColor').value,
-            fontFamily: 'Courier New'
+
+    function toPageUnits(pageCanvas, screenPixels) {
+        return screenPixels * pageCanvas.pageWidth / MAX_PAGE_WIDTH;
+    }
+
+    function pageDisplayWidth() {
+        return Math.min(wrapper.clientWidth - 2 * PAGE_SIDE_GUTTER, MAX_PAGE_WIDTH);
+    }
+
+    function fitPageCanvas(pageCanvas) {
+        const width = pageDisplayWidth();
+        const zoom = width / pageCanvas.pageWidth;
+        pageCanvas.setDimensions({ width: width, height: pageCanvas.pageHeight * zoom });
+        pageCanvas.setZoom(zoom);
+    }
+
+    function pageElementOf(pageCanvas) {
+        return pageCanvas.wrapperEl.parentElement;
+    }
+
+    function setActiveCanvas(pageCanvas) {
+        if (canvas === pageCanvas) {
+            return;
+        }
+        if (canvas) {
+            canvas.discardActiveObject();
+            canvas.requestRenderAll();
+            pageElementOf(canvas).classList.remove('active');
+        }
+        canvas = pageCanvas;
+        pageElementOf(canvas).classList.add('active');
+    }
+
+    function updateBrush(pageCanvas) {
+        pageCanvas.freeDrawingBrush.color = drawColorInput.value;
+        pageCanvas.freeDrawingBrush.width = toPageUnits(pageCanvas, Number(brushSizeInput.value));
+    }
+
+    function pageImageLoaded(pageCanvas, image) {
+        pageCanvas.backgroundImage = image;
+        pageCanvas.requestRenderAll();
+
+        loadedPages = loadedPages + 1;
+        if (loadedPages === editorData.pages.length) {
+            finishButton.disabled = false;
+        }
+    }
+
+    function createPageCanvas(page) {
+        const pageElement = document.createElement('div');
+        pageElement.className = 'page';
+        const canvasElement = document.createElement('canvas');
+        pageElement.appendChild(canvasElement);
+        wrapper.appendChild(pageElement);
+
+        const pageCanvas = new fabric.Canvas(canvasElement, { allowTouchScrolling: true });
+        pageCanvas.pageWidth = page.width;
+        pageCanvas.pageHeight = page.height;
+        fitPageCanvas(pageCanvas);
+
+        pageCanvas.freeDrawingBrush = new fabric.PencilBrush(pageCanvas);
+        updateBrush(pageCanvas);
+
+        pageCanvas.on('mouse:down', function () {
+            setActiveCanvas(pageCanvas);
         });
 
-        canvas.add(newTextElement);
-        canvas.setActiveObject(newTextElement);
+        pageCanvas.on('mouse:dblclick', function (event) {
+            if (event.target && event.target.isPlaceholder) {
+                openPlaceholderDialog(event.target);
+            }
+        });
+
+        fabric.FabricImage.fromURL(page.url, {}, { originX: 'left', originY: 'top' }).then(function (image) {
+            pageImageLoaded(pageCanvas, image);
+        });
+
+        return pageCanvas;
+    }
+
+
+    function visiblePartOf(pageCanvas) {
+        const wrapperBox = wrapper.getBoundingClientRect();
+        const pageBox = pageElementOf(pageCanvas).getBoundingClientRect();
+        const top = Math.max(pageBox.top, wrapperBox.top);
+        const bottom = Math.min(pageBox.bottom, wrapperBox.bottom);
+        return {
+            top: top,
+            bottom: bottom,
+            height: Math.max(0, bottom - top),
+            pageTop: pageBox.top,
+        };
+    }
+
+    function mostVisibleCanvas() {
+        if (visiblePartOf(canvas).height > 0) {
+            return canvas;
+        }
+        let best = pageCanvases[0];
+        for (const pageCanvas of pageCanvases) {
+            if (visiblePartOf(pageCanvas).height > visiblePartOf(best).height) {
+                best = pageCanvas;
+            }
+        }
+        return best;
+    }
+
+    function isText(object) {
+        if (!object) {
+            return false;
+        }
+        if (object.isPlaceholder) {
+            return false;
+        }
+        return object.type === 'i-text' || object.type === 'text';
+    }
+
+    function selectedText() {
+        const object = canvas.getActiveObject();
+        if (isText(object)) {
+            return object;
+        }
+        return null;
+    }
+
+    function refreshText(text) {
+        text.initDimensions();
+        text.setCoords();
+        if (text.canvas) {
+            text.canvas.requestRenderAll();
+        }
+    }
+
+    function applyFont(text, fontKey) {
+        const font = FONTS[fontKey];
+        text.set({ fontFamily: font.family, fontSize: toPageUnits(canvas, font.size) });
+        refreshText(text);
+
+        if (font.webFont) {
+            document.fonts.load('1em "' + font.family + '"').then(function () {
+                fabric.cache.clearFontCache(font.family);
+                refreshText(text);
+            });
+        }
+    }
+
+    function AddText() {
+        setActiveCanvas(mostVisibleCanvas());
+
+        const visible = visiblePartOf(canvas);
+        const middleOnScreen = (visible.top + visible.bottom) / 2;
+        const middleOnPage = (middleOnScreen - visible.pageTop) / canvas.getZoom();
+
+        textCounter = textCounter + 1;
+        const text = new fabric.IText('Semnatura ' + textCounter, {
+            originX: 'center',
+            originY: 'center',
+            left: canvas.pageWidth / 2,
+            top: middleOnPage,
+            fill: textColorInput.value,
+        });
+        applyFont(text, fontMenu.value);
+
+        canvas.add(text);
+        canvas.setActiveObject(text);
         canvas.requestRenderAll();
     }
 
-    function Bold() {
-        const activeObject = canvas.getActiveObject();
-        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
-            const isBold = activeObject.get('fontWeight') === 'bold';
-            activeObject.set('fontWeight', !isBold ? 'bold' : 'normal');
+    fontMenu.addEventListener('change', function () {
+        const text = selectedText();
+        if (text) {
+            applyFont(text, fontMenu.value);
+        }
+    });
+
+    textColorInput.addEventListener('input', function () {
+        const text = selectedText();
+        if (text) {
+            text.set('fill', textColorInput.value);
             canvas.requestRenderAll();
         }
-    }
-    function Italic() {
-        const activeObject = canvas.getActiveObject();
-        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
-            const isItalic = activeObject.get('fontStyle') === 'Italic';
-            activeObject.set('fontStyle', !isItalic ? 'Italic' : 'normal');
-            canvas.requestRenderAll();
+    });
+
+
+    function DrawingMode() {
+        drawingMode = !drawingMode;
+
+        for (const pageCanvas of pageCanvases) {
+            pageCanvas.discardActiveObject();
+            pageCanvas.isDrawingMode = drawingMode;
+            pageCanvas.requestRenderAll();
+        }
+
+        if (drawingMode) {
+            brushSizeInput.style.display = 'inline';
+            brushSizeLabel.style.display = 'inline';
+            drawingButton.classList.add('toggled');
+        } else {
+            brushSizeInput.style.display = 'none';
+            brushSizeLabel.style.display = 'none';
+            drawingButton.classList.remove('toggled');
         }
     }
-    function Underline() {
-        const activeObject = canvas.getActiveObject();
-        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
-            const isCurrentlyUnderlined = activeObject.get('underline');
-            activeObject.set('underline', !isCurrentlyUnderlined);
-            canvas.requestRenderAll();
+
+    function updateAllBrushes() {
+        for (const pageCanvas of pageCanvases) {
+            updateBrush(pageCanvas);
         }
     }
-    var bar = document.getElementById("ColorBar");
-    var out = document.getElementById("out");
-    function DrawingMode(){
-          if (!canvas) return;
-          canvas.isDrawingMode = !canvas.isDrawingMode;
-          if(canvas.isDrawingMode){
-              bar.style.display = "inline";
-              out.style.display = "inline";
-          }
-          else {
-              bar.style.display = "none";
-              out.style.display = "none";
-          }
-          if (canvas.isDrawingMode && !canvas.freeDrawingBrush) {
-              canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
-              canvas.freeDrawingBrush.color =  document.getElementById('DrawColor').value;
-              canvas.freeDrawingBrush.width = 2;
-          }
-    }
-    bar.addEventListener('change', function(e) {
-        if (canvas.isDrawingMode && canvas.freeDrawingBrush){
-            canvas.freeDrawingBrush.width = parseInt(e.target.value, 10);
+
+    drawColorInput.addEventListener('input', updateAllBrushes);
+    brushSizeInput.addEventListener('input', updateAllBrushes);
+
+    function Erase() {
+        for (const drawing of canvas.getObjects('path')) {
+            canvas.remove(drawing);
         }
-    })
-    function Erase(){
-        if (!canvas) return;
-        canvas.getObjects('path').forEach(o => canvas.remove(o));
         canvas.requestRenderAll();
     }
-    document.getElementById('TextColor').addEventListener('input', e => {
-        const activeObject = canvas.getActiveObject();
-        if (activeObject && (activeObject.type === 'i-text' || activeObject.type === 'text')) {
-            activeObject.set('fill', e.target.value);
-            canvas.requestRenderAll();
-        }
-    });
-    document.getElementById('DrawColor').addEventListener('input', e => {
-        canvas.freeDrawingBrush.color = e.target.value;
-    });
-    var FontMenu = document.getElementById('FontMenu');
 
-    FontMenu.addEventListener('change', function(e) {
-        if (!canvas) return;
-        var activeObject = canvas.getActiveObject();
-        if (!activeObject || (activeObject.type !== 'i-text' && activeObject.type !== 'text')) {
+
+    function ExportPDF() {
+        const jsPDF = window.jspdf.jsPDF;
+        let pdf = null;
+
+        for (const pageCanvas of pageCanvases) {
+            pageCanvas.discardActiveObject();
+            pageCanvas.renderAll();
+
+            const width = pageCanvas.pageWidth * POINTS_PER_INCH / editorData.dpi;
+            const height = pageCanvas.pageHeight * POINTS_PER_INCH / editorData.dpi;
+            let orientation = 'portrait';
+            if (width > height) {
+                orientation = 'landscape';
+            }
+            const image = pageCanvas.toDataURL({
+                format: 'jpeg',
+                quality: 0.92,
+                multiplier: 1 / pageCanvas.getZoom(),
+            });
+
+            if (pdf === null) {
+                pdf = new jsPDF({ unit: 'pt', format: [width, height], orientation: orientation });
+            } else {
+                pdf.addPage([width, height], orientation);
+            }
+            pdf.addImage(image, 'JPEG', 0, 0, width, height);
+        }
+
+        pdf.save(editorData.filename + '.pdf');
+    }
+
+
+    const placeholderDialog = document.getElementById('PlaceholderDialog');
+    const placeholderNameInput = document.getElementById('PlaceholderName');
+    const placeholderEmailInput = document.getElementById('PlaceholderEmail');
+    const placeholderFontInput = document.getElementById('PlaceholderFont');
+    const placeholderColorInput = document.getElementById('PlaceholderColor');
+    const placeholderError = document.getElementById('PlaceholderError');
+    let editedPlaceholder = null;
+
+    function setPlaceholderFont(placeholder, fontKey) {
+        const font = FONTS[fontKey];
+        placeholder.fontKey = fontKey;
+        placeholder.set('fontFamily', font.family);
+        refreshText(placeholder);
+
+        document.fonts.load('1em "' + font.family + '"').then(function () {
+            fabric.cache.clearFontCache(font.family);
+            refreshText(placeholder);
+        });
+    }
+
+    function AddPlaceholder() {
+        setActiveCanvas(mostVisibleCanvas());
+
+        const visible = visiblePartOf(canvas);
+        const middleOnScreen = (visible.top + visible.bottom) / 2;
+        const middleOnPage = (middleOnScreen - visible.pageTop) / canvas.getZoom();
+
+        const placeholder = new fabric.FabricText('Signature', {
+            originX: 'center',
+            originY: 'center',
+            left: canvas.pageWidth / 2,
+            top: middleOnPage,
+            fontSize: toPageUnits(canvas, 28),
+            fill: placeholderColorInput.value,
+            backgroundColor: 'rgba(253, 230, 138, 0.3)',
+            lockRotation: true,
+        });
+        placeholder.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false, mtr: false });
+        placeholder.isPlaceholder = true;
+        placeholder.signerName = '';
+        placeholder.signerEmail = '';
+        setPlaceholderFont(placeholder, placeholderFontInput.value);
+
+        canvas.add(placeholder);
+        canvas.setActiveObject(placeholder);
+        canvas.requestRenderAll();
+
+        openPlaceholderDialog(placeholder);
+    }
+
+    function openPlaceholderDialog(placeholder) {
+        editedPlaceholder = placeholder;
+        placeholderNameInput.value = placeholder.signerName;
+        placeholderEmailInput.value = placeholder.signerEmail;
+        placeholderFontInput.value = placeholder.fontKey;
+        placeholderColorInput.value = placeholder.fill;
+        placeholderError.textContent = '';
+        placeholderDialog.showModal();
+        placeholderNameInput.focus();
+    }
+
+    function EditPlaceholder() {
+        const object = canvas.getActiveObject();
+        if (object && object.isPlaceholder) {
+            openPlaceholderDialog(object);
+        }
+    }
+
+    function SavePlaceholder() {
+        const name = placeholderNameInput.value.trim();
+        const email = placeholderEmailInput.value.trim();
+
+        if (name === '') {
+            placeholderError.textContent = 'Write the name of the person who signs here.';
+            return;
+        }
+        if (email === '' || !placeholderEmailInput.checkValidity()) {
+            placeholderError.textContent = 'Write a valid email address.';
             return;
         }
 
-        var opt = FontMenu.value;
-        switch (opt) {
-            case "CourierNew":
-                activeObject.set({fontFamily: 'Courier New', padding: 15, fontSize: 10});
-                activeObject.initDimensions();
-                activeObject.setCoords();
-                canvas.requestRenderAll();
-                break;
-            case "TimesNewRoman":
-                activeObject.set({fontFamily: 'Times New Roman', padding: 15, fontSize: 10});
-                activeObject.initDimensions();
-                activeObject.setCoords();
-                canvas.requestRenderAll();
-                break;
-            case "SansSerif":
-                activeObject.set({fontFamily: 'sans-serif', padding: 15, fontSize: 10});
-                activeObject.initDimensions();
-                activeObject.setCoords();
-                canvas.requestRenderAll();
-                break;
-            case "Arial":
-                activeObject.set({fontFamily: 'Arial', padding: 15, fontSize: 10});
-                activeObject.initDimensions();
-                activeObject.setCoords();
-                canvas.requestRenderAll();
-                break;
-            case "MonsieurLaDoulaise":
-                document.fonts.load('1em "Monsieur La Doulaise"').then(function() {
-                    activeObject.set({ fontFamily: 'Monsieur La Doulaise', padding: 20, fontSize: 25});
-                    activeObject.initDimensions();
-                    activeObject.setCoords();
-                    canvas.requestRenderAll();
-                }).catch(err => console.error("Font failed to parse:", err));
-                break;
-            case "MrDeHaviland":
-                document.fonts.load('1em "Mr De Haviland"').then(function() {
-                    activeObject.set({ fontFamily: 'Mr De Haviland', padding: 20, fontSize: 25});
-                    activeObject.initDimensions();
-                    activeObject.setCoords();
-                    canvas.requestRenderAll();
-                }).catch(err => console.error("Font failed to parse:", err));
-                break;
-            case "LuxuriousScript":
-                document.fonts.load('1em "Luxurious Script"').then(function() {
-                    activeObject.set({ fontFamily: 'Luxurious Script', padding: 20, fontSize: 25});
-                    activeObject.initDimensions();
-                    activeObject.setCoords();
-                    canvas.requestRenderAll();
-                }).catch(err => console.error("Font failed to parse:", err));
-                break;
+        editedPlaceholder.signerName = name;
+        editedPlaceholder.signerEmail = email;
+        editedPlaceholder.set('text', name);
+        editedPlaceholder.set('fill', placeholderColorInput.value);
+        setPlaceholderFont(editedPlaceholder, placeholderFontInput.value);
+
+        placeholderDialog.close();
+    }
+
+    function CancelPlaceholder() {
+        if (editedPlaceholder.signerEmail === '') {
+            editedPlaceholder.canvas.remove(editedPlaceholder);
         }
+        placeholderDialog.close();
+    }
 
-    }, false);
+    placeholderDialog.addEventListener('cancel', function (event) {
+        event.preventDefault();
+        CancelPlaceholder();
+    });
 
-    window.addEventListener('DOMContentLoaded', () => {
-        const wrapper = document.getElementById('wrapper');
-        const latimeInitiala = wrapper.clientWidth;
-        const inaltimeInitiala = wrapper.clientHeight;
 
-        const htmlCanvas = document.getElementById('canvasEl');
-        htmlCanvas.width = latimeInitiala;
-        htmlCanvas.height = inaltimeInitiala;
+    const sendDialog = document.getElementById('SendDialog');
+    const senderEmailInput = document.getElementById('SenderEmail');
+    const sendError = document.getElementById('SendError');
+    const sendButton = document.getElementById('SendButton');
 
-        canvas = new fabric.Canvas('canvasEl');
-
-        fabric.InteractiveFabricObject.ownDefaults = {
-            ...fabric.InteractiveFabricObject.ownDefaults,
-            cornerStyle: 'circle',
-            cornerSize: 9,
-            cornerColor: '#0096FF',
-            padding: 8,
-            transparentCorners: false,
-            borderColor: 'lightblue',
-            borderScaleFactor: 2,
-        };
-
-        function curataSiReconstruiesteUrl(urlBrut) {
-            let caleCurata = urlBrut;
-            const indexMedia = urlBrut.indexOf('/media/');
-            if (indexMedia !== -1) {
-                caleCurata = urlBrut.substring(indexMedia);
+    function allPlaceholders() {
+        const found = [];
+        for (let index = 0; index < pageCanvases.length; index++) {
+            for (const object of pageCanvases[index].getObjects()) {
+                if (object.isPlaceholder) {
+                    found.push({ pageNumber: index + 1, placeholder: object });
+                }
             }
-            return window.location.origin + caleCurata;
         }
+        return found;
+    }
 
-        const backgroundImageUrl = curataSiReconstruiesteUrl("{{ background_url }}");
-        let fabricImgInstance = null;
-
-        function pozitioneazaImaginea() {
-            if (!fabricImgInstance) return;
-
-            const currentWidth = wrapper.clientWidth;
-            const currentHeight = wrapper.clientHeight;
-            const imgW = fabricImgInstance.width;
-            const imgH = fabricImgInstance.height;
-
-            const MAX_W = 800,  MAX_H = 1100;
-            const MIN_W = 250,  MIN_H = 250;
-
-            const fitScale = Math.min(currentWidth / imgW, currentHeight / imgH);
-
-            let scaleFactor = Math.min(fitScale, MAX_W / imgW, MAX_H / imgH);
-
-            scaleFactor = Math.max(scaleFactor, MIN_W / imgW, MIN_H / imgH);
-
-            scaleFactor = Math.min(scaleFactor, fitScale);
-
-            fabricImgInstance.set({ scaleX: scaleFactor, scaleY: scaleFactor });
-            canvas.centerObject(fabricImgInstance);
-            fabricImgInstance.setCoords();
+    function OpenSendDialog() {
+        sendError.textContent = '';
+        if (allPlaceholders().length === 0) {
+            sendError.textContent = 'Add at least one placeholder before sending.';
         }
+        sendDialog.showModal();
+        senderEmailInput.focus();
+    }
 
-        const nativeImg = new Image();
-        nativeImg.crossOrigin = 'anonymous';
-        nativeImg.src = backgroundImageUrl;
+    function CloseSendDialog() {
+        sendDialog.close();
+    }
 
-        nativeImg.onload = () => {
-            fabricImgInstance = new fabric.FabricImage(nativeImg, {
-                selectable: false,
-                evented: false
+    function placeholderData() {
+        const data = [];
+        for (const item of allPlaceholders()) {
+            const placeholder = item.placeholder;
+            const width = placeholder.getScaledWidth();
+            const height = placeholder.getScaledHeight();
+            data.push({
+                page_number: item.pageNumber,
+                left: placeholder.left - width / 2,
+                top: placeholder.top - height / 2,
+                width: width,
+                height: height,
+                font_size: placeholder.fontSize * placeholder.scaleY,
+                font_key: placeholder.fontKey,
+                color: placeholder.fill,
+                name: placeholder.signerName,
+                email: placeholder.signerEmail,
             });
+        }
+        return data;
+    }
 
-            pozitioneazaImaginea();
+    async function pageImageWithoutPlaceholders(pageCanvas) {
+        pageCanvas.discardActiveObject();
+        for (const object of pageCanvas.getObjects()) {
+            if (object.isPlaceholder) {
+                object.visible = false;
+            }
+        }
+        pageCanvas.renderAll();
 
-            canvas.add(fabricImgInstance);
-            canvas.sendObjectToBack(fabricImgInstance);
-
-            canvas.requestRenderAll();
-        };
-
-        window.addEventListener('resize', () => {
-            const currentWidth = wrapper.clientWidth;
-            const currentHeight = wrapper.clientHeight;
-
-            canvas.setDimensions({ width: currentWidth, height: currentHeight });
-
-            pozitioneazaImaginea();
-            canvas.requestRenderAll();
+        const dataUrl = pageCanvas.toDataURL({
+            format: 'jpeg',
+            quality: 0.92,
+            multiplier: 1 / pageCanvas.getZoom(),
         });
-    });
-    let isReloading = false;
 
-    window.addEventListener('keydown', function(event) {
-        if (event.key === 'F5' || ((event.ctrlKey || event.metaKey) && (event.key === 'r' || event.key === 'R'))) {
-            isReloading = true;
+        for (const object of pageCanvas.getObjects()) {
+            object.visible = true;
+        }
+        pageCanvas.renderAll();
+
+        const response = await fetch(dataUrl);
+        return await response.blob();
+    }
+
+    async function SendForSigning() {
+        const senderEmail = senderEmailInput.value.trim();
+        if (senderEmail === '' || !senderEmailInput.checkValidity()) {
+            sendError.textContent = 'Write a valid email for yourself.';
+            return;
+        }
+        if (allPlaceholders().length === 0) {
+            sendError.textContent = 'Add at least one placeholder before sending.';
+            return;
+        }
+
+        sendError.textContent = '';
+        sendButton.disabled = true;
+        sendButton.textContent = 'Sending…';
+
+        const form = new FormData();
+        form.append('sender_email', senderEmail);
+        form.append('placeholders', JSON.stringify(placeholderData()));
+        for (let index = 0; index < pageCanvases.length; index++) {
+            const image = await pageImageWithoutPlaceholders(pageCanvases[index]);
+            form.append('page_' + (index + 1), image, 'page.jpg');
+        }
+
+        try {
+            const response = await fetch('{% url "send_for_signing" %}', {
+                method: 'POST',
+                body: form,
+                headers: { 'X-CSRFToken': csrfToken },
+            });
+            const result = await response.json();
+
+            if (response.ok) {
+                window.location.href = result.redirect;
+                return;
+            }
+            sendError.textContent = result.error;
+        } catch (error) {
+            sendError.textContent = 'Could not reach the server. Try again.';
+        }
+
+        sendButton.disabled = false;
+        sendButton.textContent = 'Send';
+    }
+
+
+    window.addEventListener('keydown', function (event) {
+        if (event.key !== 'Delete' && event.key !== 'Backspace') {
+            return;
+        }
+        if (event.target.tagName === 'INPUT') {
+            return;
+        }
+        const selected = canvas.getActiveObject();
+        if (!selected || selected.isEditing) {
+            return;
+        }
+        for (const object of canvas.getActiveObjects()) {
+            canvas.remove(object);
+        }
+        canvas.discardActiveObject();
+        canvas.requestRenderAll();
+    });
+
+    let resizeTimer = null;
+    window.addEventListener('resize', function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () {
+            for (const pageCanvas of pageCanvases) {
+                fitPageCanvas(pageCanvas);
+            }
+        }, 150);
+    });
+
+
+    function sendHeartbeat() {
+        fetch('{% url "heartbeat" %}', { method: 'POST' }).then(function (response) {
+            if (response.status === 410) {
+                window.location.href = '{% url "homepage" %}';
+            }
+        }).catch(function () {});
+    }
+
+    setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') {
+            sendHeartbeat();
         }
     });
 
-    window.addEventListener('pagehide', function() {
-        if (isReloading) return;
-
-        let url = "/track-leave/";
-        let formData = new FormData();
-        formData.append("action", "left_page");
-
-        navigator.sendBeacon(url, formData);
+    window.addEventListener('pageshow', function (event) {
+        if (event.persisted) {
+            sendHeartbeat();
+        }
     });
+
+    window.addEventListener('pagehide', function () {
+        navigator.sendBeacon('{% url "track_leave" %}');
+    });
+
+
+    for (const page of editorData.pages) {
+        pageCanvases.push(createPageCanvas(page));
+    }
+    setActiveCanvas(pageCanvases[0]);
 </script>
 
 </body>

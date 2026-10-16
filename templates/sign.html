@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign {{ document.filename }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Monsieur+La+Doulaise&family=Mr+De+Haviland&family=Luxurious+Script&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #374151;
+        }
+        .top-bar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 18px;
+            background: #ffffff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .top-bar h1 {
+            margin: 0;
+            font-size: 16px;
+            color: #111827;
+        }
+        .top-bar p {
+            margin: 4px 0 0;
+            font-size: 13px;
+            color: #6b7280;
+        }
+        .top-bar form {
+            margin: 0;
+        }
+        .sign-button {
+            font: inherit;
+            font-size: 15px;
+            padding: 10px 26px;
+            border: 1px solid #2563eb;
+            border-radius: 6px;
+            background: #2563eb;
+            color: #ffffff;
+            cursor: pointer;
+        }
+        .sign-button:hover {
+            background: #1d4ed8;
+        }
+        .pages {
+            padding: 24px 16px;
+        }
+        .page {
+            position: relative;
+            max-width: 800px;
+            margin: 0 auto 24px;
+            background: #ffffff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+            container-type: inline-size;
+        }
+        .page img {
+            display: block;
+            width: 100%;
+        }
+        .box {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            white-space: nowrap;
+            border-radius: 3px;
+        }
+        .box.mine {
+            background: rgba(253, 230, 138, 0.3);
+            outline: 2px solid #f59e0b;
+        }
+        .box.waiting {
+            background: #f3f4f6;
+            outline: 1px dashed #9ca3af;
+            font-family: system-ui, sans-serif !important;
+            font-size: 11px !important;
+            color: #6b7280 !important;
+        }
+        .font-CourierNew {
+            font-family: 'Courier New', 'Liberation Mono', monospace;
+        }
+        .font-TimesNewRoman {
+            font-family: 'Times New Roman', 'Liberation Serif', serif;
+        }
+        .font-SansSerif {
+            font-family: 'Liberation Sans', sans-serif;
+        }
+        .font-Arial {
+            font-family: Arial, 'Liberation Sans', sans-serif;
+        }
+        .font-MonsieurLaDoulaise {
+            font-family: 'Monsieur La Doulaise', cursive;
+        }
+        .font-MrDeHaviland {
+            font-family: 'Mr De Haviland', cursive;
+        }
+        .font-LuxuriousScript {
+            font-family: 'Luxurious Script', cursive;
+        }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <div>
+            <h1>{{ document.sender_email }} asks you to sign "{{ document.filename }}"</h1>
+            <p>Your name, {{ signer.name }}, will be placed in the yellow boxes.</p>
+        </div>
+        <form method="post">
+            {% csrf_token %}
+            <button type="submit" class="sign-button">Sign</button>
+        </form>
+    </div>
+
+    <div class="pages">
+        {% for page in pages %}
+        <div class="page">
+            <img src="{{ page.url }}" alt="Page {{ forloop.counter }}">
+            {% for box in page.boxes %}
+            <div class="box {{ box.state }} font-{{ box.font_key }}"
+                 style="left: {{ box.left }}%; top: {{ box.top }}%; width: {{ box.width }}%; height: {{ box.height }}%; font-size: {{ box.font_size }}cqw; color: {{ box.color }};">
+                {{ box.label }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
