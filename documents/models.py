@@ -1,70 +1,120 @@
-from django.db import models
-from django.core.validators import FileExtensionValidator, MinValueValidator
-from django.db.models.signals import post_save
-from django.http import JsonResponse
-from pdf2image import convert_from_path
-from django.conf import settings
 import os
+import shutil
+import uuid
+from datetime import timedelta
 
-COVER_PAGE_DIRECTORY = 'coverdirectory/'
-PDF_DIRECTORY = 'pdfdirectory/'
-COVER_PAGE_FORMAT = 'jpg'
+from django.conf import settings
+from django.core.validators import FileExtensionValidator
+from django.db import models
+from django.utils import timezone
 
-# Create your models here.
-class Image(models.Model):
-    name = models.CharField(max_length=200)
-    file = models.FileField(upload_to ='images/')
-    def __str__(self):
-        return self.name
+DOCUMENTS_DIRECTORY = 'documents'
+ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg']
+LEFT_GRACE_PERIOD = timedelta(minutes=2)
+ABANDONED_AFTER = timedelta(minutes=10)
+SIGNING_EXPIRES_AFTER = timedelta(days=30)
 
 
-def set_pdf_file_name(instance, filename):
-    return os.path.join(PDF_DIRECTORY, '{}.pdf'.format(instance.filename))
+def document_upload_path(instance, filename):
+    name, extension = os.path.splitext(filename)
+    folder = os.path.join(DOCUMENTS_DIRECTORY, str(instance.uid))
+    return os.path.join(folder, 'original' + extension.lower())
 
-def set_cover_file_name(instance, filename):
-    return os.path.join(COVER_PAGE_DIRECTORY, '{}.{}'.format(instance.filename, COVER_PAGE_FORMAT))
 
-class Pdffile(models.Model):
-    pdf = models.FileField(
-        upload_to=set_pdf_file_name,
-        validators=[FileExtensionValidator(allowed_extensions=['pdf'])],
-        max_length = 500,
-        )
+class Document(models.Model):
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    file = models.FileField(
+        upload_to=document_upload_path,
+        validators=[FileExtensionValidator(allowed_extensions=ALLOWED_EXTENSIONS)],
+        max_length=500,
+    )
     filename = models.CharField(max_length=50)
-    pagenumforcover = models.IntegerField(validators=[MinValueValidator(1)])
-    coverpage = models.FileField(upload_to=set_cover_file_name)
-def convert_pdf_to_image(instance, created, **kwargs):
-    if created:
-        cover_page_dir = os.path.join(settings.MEDIA_ROOT, COVER_PAGE_DIRECTORY)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(default=timezone.now)
+    left_at = models.DateTimeField(null=True, blank=True)
+    mode = models.CharField(max_length=10, default='solo')
+    sender_email = models.EmailField(blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
 
-        if not os.path.exists(cover_page_dir):
-            os.makedirs(cover_page_dir, exist_ok=True)
+    def __str__(self):
+        return self.filename
 
-        poppler_bin_path = getattr(settings, 'POPPLER_PATH', None)
+    @property
+    def kind(self):
+        name, extension = os.path.splitext(self.file.name)
+        if extension == '.pdf':
+            return 'pdf'
+        if extension in ('.doc', '.docx'):
+            return 'word'
+        return 'image'
 
-        pdf_filename, _ = os.path.splitext(os.path.basename(instance.pdf.name))
+    @property
+    def folder_path(self):
+        return os.path.join(settings.MEDIA_ROOT, DOCUMENTS_DIRECTORY, str(self.uid))
 
-        convert_from_path(
-            pdf_path=instance.pdf.path,
-            dpi=300,
-            first_page=instance.pagenumforcover,
-            last_page=instance.pagenumforcover,
-            fmt=COVER_PAGE_FORMAT,
-            output_folder=cover_page_dir,
-            output_file=pdf_filename,
-            poppler_path=poppler_bin_path
-        )
-        generated_file = None
-        for file in os.listdir(cover_page_dir):
-            if file.startswith(pdf_filename) and file.lower().endswith(COVER_PAGE_FORMAT):
-                generated_file = file
-                break
+    def mark_seen(self):
+        self.last_seen = timezone.now()
+        self.left_at = None
+        self.save(update_fields=['last_seen', 'left_at'])
 
-        if generated_file:
-            new_cover_page_path_relative = os.path.join(COVER_PAGE_DIRECTORY, generated_file).replace('\\', '/')
-            Pdffile.objects.filter(pk=instance.pk).update(coverpage=new_cover_page_path_relative)
-        else :
-            data = {'error': 'Coverpage number not found'}
-            return JsonResponse(data, status=404)
+    def mark_left(self):
+        self.left_at = timezone.now()
+        self.save(update_fields=['left_at'])
 
-post_save.connect(convert_pdf_to_image, sender=Pdffile)
+    def delete_with_files(self):
+        if os.path.isdir(self.folder_path):
+            shutil.rmtree(self.folder_path)
+        self.delete()
+
+    def everyone_signed(self):
+        waiting = self.signers.filter(signed_at__isnull=True)
+        return not waiting.exists()
+
+
+class Page(models.Model):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='pages')
+    number = models.PositiveIntegerField()
+    image = models.FileField(max_length=500)
+    width = models.PositiveIntegerField()
+    height = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ['number']
+
+
+class Signer(models.Model):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='signers')
+    name = models.CharField(max_length=100)
+    email = models.EmailField()
+    token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    signed_at = models.DateTimeField(null=True, blank=True)
+
+
+class Placeholder(models.Model):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='placeholders')
+    signer = models.ForeignKey(Signer, on_delete=models.CASCADE, related_name='placeholders')
+    page_number = models.PositiveIntegerField()
+    left = models.FloatField()
+    top = models.FloatField()
+    width = models.FloatField()
+    height = models.FloatField()
+    font_size = models.FloatField()
+    font_key = models.CharField(max_length=50)
+    color = models.CharField(max_length=7)
+
+
+def purge_abandoned_documents():
+    now = timezone.now()
+    still_editing = Document.objects.filter(sent_at__isnull=True)
+
+    left_too_long_ago = still_editing.filter(left_at__lt=now - LEFT_GRACE_PERIOD)
+    for document in left_too_long_ago:
+        document.delete_with_files()
+
+    silent_too_long = still_editing.filter(last_seen__lt=now - ABANDONED_AFTER)
+    for document in silent_too_long:
+        document.delete_with_files()
+
+    never_finished = Document.objects.filter(sent_at__lt=now - SIGNING_EXPIRES_AFTER)
+    for document in never_finished:
+        document.delete_with_files()

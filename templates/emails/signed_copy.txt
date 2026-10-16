@@ -1,0 +1,9 @@
+Hello,
+
+{{ signer.name }} has signed "{{ document.filename }}".
+{% if finished %}
+Everyone has signed. The final document is attached.
+{% else %}
+The document signed so far is attached. Still waiting for:
+{% for person in waiting %}- {{ person.name }} ({{ person.email }})
+{% endfor %}{% endif %}
