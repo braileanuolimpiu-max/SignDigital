@@ -203,9 +203,7 @@ def read_page_images(request, document):
         if uploaded is None:
             raise SendError(f'Page {page.number} is missing.')
 
-        first_bytes = uploaded.read(3)
-        uploaded.seek(0)
-        if first_bytes != b'\xff\xd8\xff':
+        if uploaded.content_type != 'image/jpeg':
             raise SendError(f'Page {page.number} is not a JPEG image.')
 
         page_images[page] = uploaded
