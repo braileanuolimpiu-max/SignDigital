@@ -103,18 +103,25 @@ class Placeholder(models.Model):
     color = models.CharField(max_length=7)
 
 
+def delete_if_possible(document):
+    try:
+        document.delete_with_files()
+    except OSError:
+        pass
+
+
 def purge_abandoned_documents():
     now = timezone.now()
     still_editing = Document.objects.filter(sent_at__isnull=True)
 
     left_too_long_ago = still_editing.filter(left_at__lt=now - LEFT_GRACE_PERIOD)
     for document in left_too_long_ago:
-        document.delete_with_files()
+        delete_if_possible(document)
 
     silent_too_long = still_editing.filter(last_seen__lt=now - ABANDONED_AFTER)
     for document in silent_too_long:
-        document.delete_with_files()
+        delete_if_possible(document)
 
     never_finished = Document.objects.filter(sent_at__lt=now - SIGNING_EXPIRES_AFTER)
     for document in never_finished:
-        document.delete_with_files()
+        delete_if_possible(document)

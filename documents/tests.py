@@ -1,7 +1,9 @@
 import io
 import json
+import os
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -145,6 +147,19 @@ class CleanupTests(SignElectricTestCase):
 
         self.client.get('/')
 
+        self.assertEqual(Document.objects.count(), 0)
+        self.assertFalse(os.path.exists(self.document.folder_path))
+
+    def test_locked_folder_is_skipped_and_deleted_later(self):
+        self.document.left_at = timezone.now() - timedelta(minutes=3)
+        self.document.save()
+
+        with patch('shutil.rmtree', side_effect=PermissionError):
+            response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 1)
+
+        self.client.get('/')
         self.assertEqual(Document.objects.count(), 0)
 
     def test_document_is_deleted_after_eleven_silent_minutes(self):
@@ -366,9 +381,11 @@ class SignDocumentTests(SignElectricTestCase):
         ana_browser.post(f'/sign/{ana.token}/')
         self.assertEqual(Document.objects.count(), 1)
 
+        folder = Document.objects.get().folder_path
         dan_browser = self.client_class()
         dan_browser.post(f'/sign/{dan.token}/')
         self.assertEqual(Document.objects.count(), 0)
+        self.assertFalse(os.path.exists(folder))
 
     def test_signing_twice_says_already_signed(self):
         self.send([
