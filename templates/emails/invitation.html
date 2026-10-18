@@ -7,9 +7,11 @@
             {{ document.sender_email }} asks you to sign <strong>{{ document.filename }}</strong>.
             Your name will be placed in {{ placeholder_count }} place{{ placeholder_count|pluralize }}.
         </p>
-        <a href="{{ link }}" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 6px; font-size: 15px;">
-            Open and sign
-        </a>
+        <div style="text-align: center;">
+            <a href="{{ link }}" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 6px; font-size: 15px;">
+                Open and sign
+            </a>
+        </div>
         <p style="margin: 20px 0 0; font-size: 12px; color: #9ca3af;">
             If the button does not work, open this link: {{ link }}
         </p>

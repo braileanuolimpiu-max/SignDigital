@@ -62,11 +62,16 @@ pip install -r requirements.txt
 # 4. Apply migrations
 python manage.py migrate
 
-# 5. Run the dev server
-python manage.py runserver
+# 5. Start the server on your local network
+python manage.py runserver 0.0.0.0:8000
 ```
 
-Then open http://127.0.0.1:8000/.
+`0.0.0.0` makes the server reachable from every device on your Wi-Fi, not only this PC.
+Find your PC's address with `ipconfig` (the "IPv4 Address" line, e.g. `192.168.18.92`)
+and open `http://<that address>:8000/` on the PC or on your phone. Use this same address
+as `SITE_URL` (see below), so the links in the emails point to it too.
+
+Make sure the virtual environment is active first (your terminal line starts with `(venv)`).
 
 ## Usage
 
@@ -89,8 +94,8 @@ Without email settings, emails are printed in the terminal. To send real emails 
    https://myaccount.google.com/apppasswords.
 2. Copy `config/local_settings.example.py` to `config/local_settings.py` (git ignores it) and fill in:
    - `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD`
-   - `SITE_URL`: the address people open, e.g. `http://192.168.1.10:8000` on your Wi-Fi
-     (the one `runlan.bat` prints).
+   - `SITE_URL`: the address people open, e.g. `http://192.168.18.92:8000` on your Wi-Fi
+     (your PC's IPv4 address from `ipconfig`, with `:8000`).
 
 ## Running tests
 
