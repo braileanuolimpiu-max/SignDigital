@@ -1,7 +1,0 @@
-Hello {{ signer.name }},
-
-{{ document.sender_email }} asks you to sign "{{ document.filename }}".
-Your name will be placed in {{ placeholder_count }} place{{ placeholder_count|pluralize }} in the document.
-
-Open and sign:
-{{ link }}

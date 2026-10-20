@@ -277,6 +277,13 @@ class SendForSigningTests(SignElectricTestCase):
         self.assertIn('boss@example.com via SignElectric', email.from_email)
         self.assertEqual(email.reply_to, ['boss@example.com'])
 
+    def test_invitation_is_html_with_the_button(self):
+        self.send([placeholder('Ana', 'ana@example.com')])
+
+        email = mail.outbox[0]
+        self.assertEqual(email.content_subtype, 'html')
+        self.assertIn('Open and sign', email.body)
+
     def test_document_is_marked_as_sent(self):
         self.send([placeholder('Ana', 'ana@example.com')])
 
@@ -367,6 +374,9 @@ class SignDocumentTests(SignElectricTestCase):
         email = mail.outbox[0]
         self.assertEqual(email.to, ['boss@example.com', 'ana@example.com'])
         self.assertEqual(email.attachments[0].mimetype, 'application/pdf')
+        self.assertEqual(email.content_subtype, 'html')
+        self.assertIn('Still waiting for', email.body)
+        self.assertIn('Dan (dan@example.com)', email.body)
 
     def test_document_is_deleted_when_everyone_signed(self):
         self.send([
