@@ -92,10 +92,15 @@ Without email settings, emails are printed in the terminal. To send real emails 
 
 1. Turn on 2-Step Verification for the Google account, then create an app password at
    https://myaccount.google.com/apppasswords.
-2. Copy `config/local_settings.example.py` to `config/local_settings.py` (git ignores it) and fill in:
-   - `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD`
-   - `SITE_URL`: the address people open, e.g. `http://192.168.18.92:8000` on your Wi-Fi
+2. Create `config/local_settings.py` (git ignores it) with these three lines:
+   ```python
+   SITE_URL = 'http://192.168.18.92:8000'
+   GMAIL_ADDRESS = 'your.address@gmail.com'
+   GMAIL_APP_PASSWORD = 'the16letterspassword'
+   ```
+   - `SITE_URL`: the address people open on your Wi-Fi
      (your PC's IPv4 address from `ipconfig`, with `:8000`).
+   - `GMAIL_APP_PASSWORD`: the app password, without spaces.
 
 ## Running tests
 
