@@ -99,7 +99,6 @@ class Placeholder(models.Model):
     width = models.FloatField()
     height = models.FloatField()
     font_size = models.FloatField()
-    font_key = models.CharField(max_length=50)
     color = models.CharField(max_length=7)
 
 

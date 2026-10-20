@@ -44,7 +44,6 @@ def placeholder(name, email):
     return {
         'name': name,
         'email': email,
-        'font_key': 'MrDeHaviland',
         'color': '#1e3a8a',
         'page_number': 1,
         'left': 100,
@@ -405,16 +404,3 @@ class SignDocumentTests(SignElectricTestCase):
         response = self.client.get(f'/sign/{random_token}/')
 
         self.assertContains(response, 'This link is no longer active')
-
-    def test_signing_works_with_a_normal_font(self):
-        courier_placeholder = placeholder('Ana', 'ana@example.com')
-        courier_placeholder['font_key'] = 'CourierNew'
-        self.send([courier_placeholder])
-        ana = Signer.objects.get()
-        mail.outbox = []
-
-        ana_browser = self.client_class()
-        ana_browser.post(f'/sign/{ana.token}/')
-
-        email = mail.outbox[0]
-        self.assertEqual(email.attachments[0].mimetype, 'application/pdf')

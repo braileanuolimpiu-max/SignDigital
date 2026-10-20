@@ -7,7 +7,7 @@ image, add text signatures or draw freehand on any page, and export the result a
 
 - Upload a **PDF**, a **Word file** (doc, docx) or an **image** (png, jpg) with one button
 - Every page is shown in a scrollable editor, on desktop and on phones
-- Add and style text (bold, italic, underline, colour, handwriting-style fonts)
+- Add text in the Mr De Haviland handwriting font, in any colour
 - Freehand drawing with an adjustable brush size and colour
 - Export the signed document to PDF
 - Uploaded files are temporary: they are deleted two minutes after you leave the editor,

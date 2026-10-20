@@ -10,22 +10,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .converters import PAGE_DPI
 
-FONTS_FOLDER = os.path.join(settings.BASE_DIR, 'documents', 'fonts')
-
-SIGNING_FONTS = {
-    'CourierNew': 'LiberationMono-Regular.ttf',
-    'TimesNewRoman': 'LiberationSerif-Regular.ttf',
-    'SansSerif': 'LiberationSans-Regular.ttf',
-    'Arial': 'LiberationSans-Regular.ttf',
-    'MonsieurLaDoulaise': 'MonsieurLaDoulaise-Regular.ttf',
-    'MrDeHaviland': 'MrDeHaviland-Regular.ttf',
-    'LuxuriousScript': 'LuxuriousScript-Regular.ttf',
-}
+SIGNATURE_FONT_FILE = os.path.join(settings.BASE_DIR, 'documents', 'fonts', 'MrDeHaviland-Regular.ttf')
 
 
 def draw_signature(image, placeholder):
-    font_file = os.path.join(FONTS_FOLDER, SIGNING_FONTS[placeholder.font_key])
-    font = ImageFont.truetype(font_file, round(placeholder.font_size))
+    font = ImageFont.truetype(SIGNATURE_FONT_FILE, round(placeholder.font_size))
 
     center_x = placeholder.left + placeholder.width / 2
     center_y = placeholder.top + placeholder.height / 2
