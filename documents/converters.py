@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 
 from .models import Page
 
-PAGE_DPI = 150
+PAGE_DPI = 200
 MAX_IMAGE_SIDE = 2500
 WORD_TIMEOUT_SECONDS = 120
 

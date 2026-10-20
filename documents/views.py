@@ -15,7 +15,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
 from .models import Document, Placeholder, Signer, purge_abandoned_documents
-from .signing import SIGNING_FONTS, send_invitations, send_signed_copy
+from .signing import send_invitations, send_signed_copy
 
 EXPIRED_MESSAGE = 'Your document expired. Please upload it again.'
 EMAIL_FAILED_MESSAGE = 'The emails could not be sent. Check the email settings and try again.'
@@ -154,15 +154,12 @@ def read_placeholders(request, document):
         email = email.strip()
         email = email.lower()
 
-        font_key = item.get('font_key')
         color = str(item.get('color', ''))
 
         if name == '':
             raise SendError('Every placeholder needs a name.')
         if not is_valid_email(email):
             raise SendError(f'"{email}" is not a valid email.')
-        if font_key not in SIGNING_FONTS:
-            raise SendError('A placeholder has an unknown font.')
         if len(color) != 7 or not color.startswith('#'):
             raise SendError('A placeholder has a wrong color.')
 
@@ -182,7 +179,6 @@ def read_placeholders(request, document):
         placeholders.append({
             'name': name[:100],
             'email': email,
-            'font_key': font_key,
             'color': color,
             'page_number': page_number,
             'left': left,
@@ -240,7 +236,6 @@ def create_signers(document, placeholders):
             width=item['width'],
             height=item['height'],
             font_size=item['font_size'],
-            font_key=item['font_key'],
             color=item['color'],
         )
 
@@ -349,7 +344,6 @@ def sign_document(request, token):
             boxes.append({
                 'state': state,
                 'label': label,
-                'font_key': placeholder.font_key,
                 'color': placeholder.color,
                 'left': placeholder.left / page.width * 100,
                 'top': placeholder.top / page.height * 100,

@@ -273,22 +273,13 @@
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Monsieur+La+Doulaise&family=Mr+De+Haviland&family=Luxurious+Script&display=swap" rel="stylesheet"></head>
+    <link href="https://fonts.googleapis.com/css2?family=Mr+De+Haviland&display=swap" rel="stylesheet"></head>
 <body>
     <div class="info-panel">
         <div class="toolbar-group">
             <span class="group-label">Text</span>
             <div class="group-controls">
                 <button type="button" onclick="AddText()">Add Text</button>
-                <select id="FontMenu">
-                    <option value="CourierNew">CourierNew</option>
-                    <option value="TimesNewRoman">TimesNewRoman</option>
-                    <option value="SansSerif">Sans-serif</option>
-                    <option value="Arial">Arial</option>
-                    <option value="MonsieurLaDoulaise">Monsieur La Doulaise</option>
-                    <option value="MrDeHaviland" selected>Mr De Haviland</option>
-                    <option value="LuxuriousScript">Luxurious Script</option>
-                </select>
                 <div class="input-color">
                     <input type="color" id="TextColor" value="#000000" title="Text color">
                 </div>
@@ -338,17 +329,6 @@
         <label>Email
             <input type="email" id="PlaceholderEmail">
         </label>
-        <label>Signing font
-            <select id="PlaceholderFont">
-                <option value="CourierNew">CourierNew</option>
-                <option value="TimesNewRoman">TimesNewRoman</option>
-                <option value="SansSerif">Sans-serif</option>
-                <option value="Arial">Arial</option>
-                <option value="MonsieurLaDoulaise">Monsieur La Doulaise</option>
-                <option value="MrDeHaviland" selected>Mr De Haviland</option>
-                <option value="LuxuriousScript">Luxurious Script</option>
-            </select>
-        </label>
         <div class="dialog-field">
             <span class="field-name">Color</span>
             <input type="color" id="PlaceholderColor" value="#1e3a8a">
@@ -382,19 +362,12 @@
     const POINTS_PER_INCH = 72;
     const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 
-    const FONTS = {
-        CourierNew:         { family: 'Courier New',          size: 14, webFont: false },
-        TimesNewRoman:      { family: 'Times New Roman',      size: 14, webFont: false },
-        SansSerif:          { family: 'sans-serif',           size: 14, webFont: false },
-        Arial:              { family: 'Arial',                size: 14, webFont: false },
-        MonsieurLaDoulaise: { family: 'Monsieur La Doulaise', size: 25, webFont: true },
-        MrDeHaviland:       { family: 'Mr De Haviland',       size: 25, webFont: true },
-        LuxuriousScript:    { family: 'Luxurious Script',     size: 25, webFont: true },
-    };
+    const SIGNATURE_FONT = 'Mr De Haviland';
+    const TEXT_SIZE = 25;
+    const PLACEHOLDER_SIZE = 28;
 
     const editorData = JSON.parse(document.getElementById('editor-data').textContent);
     const wrapper = document.getElementById('wrapper');
-    const fontMenu = document.getElementById('FontMenu');
     const textColorInput = document.getElementById('TextColor');
     const drawColorInput = document.getElementById('DrawColor');
     const brushSizeInput = document.getElementById('ColorBar');
@@ -551,17 +524,11 @@
         }
     }
 
-    function applyFont(text, fontKey) {
-        const font = FONTS[fontKey];
-        text.set({ fontFamily: font.family, fontSize: toPageUnits(canvas, font.size) });
-        refreshText(text);
-
-        if (font.webFont) {
-            document.fonts.load('1em "' + font.family + '"').then(function () {
-                fabric.cache.clearFontCache(font.family);
-                refreshText(text);
-            });
-        }
+    function waitForSignatureFont(text) {
+        document.fonts.load('1em "' + SIGNATURE_FONT + '"').then(function () {
+            fabric.cache.clearFontCache(SIGNATURE_FONT);
+            refreshText(text);
+        });
     }
 
     function AddText() {
@@ -577,21 +544,16 @@
             originY: 'center',
             left: canvas.pageWidth / 2,
             top: middleOnPage,
+            fontFamily: SIGNATURE_FONT,
+            fontSize: toPageUnits(canvas, TEXT_SIZE),
             fill: textColorInput.value,
         });
-        applyFont(text, fontMenu.value);
+        waitForSignatureFont(text);
 
         canvas.add(text);
         canvas.setActiveObject(text);
         canvas.requestRenderAll();
     }
-
-    fontMenu.addEventListener('change', function () {
-        const text = selectedText();
-        if (text) {
-            applyFont(text, fontMenu.value);
-        }
-    });
 
     textColorInput.addEventListener('input', function () {
         const text = selectedText();
@@ -674,22 +636,9 @@
     const placeholderDialog = document.getElementById('PlaceholderDialog');
     const placeholderNameInput = document.getElementById('PlaceholderName');
     const placeholderEmailInput = document.getElementById('PlaceholderEmail');
-    const placeholderFontInput = document.getElementById('PlaceholderFont');
     const placeholderColorInput = document.getElementById('PlaceholderColor');
     const placeholderError = document.getElementById('PlaceholderError');
     let editedPlaceholder = null;
-
-    function setPlaceholderFont(placeholder, fontKey) {
-        const font = FONTS[fontKey];
-        placeholder.fontKey = fontKey;
-        placeholder.set('fontFamily', font.family);
-        refreshText(placeholder);
-
-        document.fonts.load('1em "' + font.family + '"').then(function () {
-            fabric.cache.clearFontCache(font.family);
-            refreshText(placeholder);
-        });
-    }
 
     function AddPlaceholder() {
         setActiveCanvas(mostVisibleCanvas());
@@ -703,7 +652,8 @@
             originY: 'center',
             left: canvas.pageWidth / 2,
             top: middleOnPage,
-            fontSize: toPageUnits(canvas, 28),
+            fontFamily: SIGNATURE_FONT,
+            fontSize: toPageUnits(canvas, PLACEHOLDER_SIZE),
             fill: placeholderColorInput.value,
             backgroundColor: 'rgba(253, 230, 138, 0.3)',
             lockRotation: true,
@@ -712,7 +662,7 @@
         placeholder.isPlaceholder = true;
         placeholder.signerName = '';
         placeholder.signerEmail = '';
-        setPlaceholderFont(placeholder, placeholderFontInput.value);
+        waitForSignatureFont(placeholder);
 
         canvas.add(placeholder);
         canvas.setActiveObject(placeholder);
@@ -725,7 +675,6 @@
         editedPlaceholder = placeholder;
         placeholderNameInput.value = placeholder.signerName;
         placeholderEmailInput.value = placeholder.signerEmail;
-        placeholderFontInput.value = placeholder.fontKey;
         placeholderColorInput.value = placeholder.fill;
         placeholderError.textContent = '';
         placeholderDialog.showModal();
@@ -756,7 +705,7 @@
         editedPlaceholder.signerEmail = email;
         editedPlaceholder.set('text', name);
         editedPlaceholder.set('fill', placeholderColorInput.value);
-        setPlaceholderFont(editedPlaceholder, placeholderFontInput.value);
+        refreshText(editedPlaceholder);
 
         placeholderDialog.close();
     }
@@ -817,7 +766,6 @@
                 width: width,
                 height: height,
                 font_size: placeholder.fontSize * placeholder.scaleY,
-                font_key: placeholder.fontKey,
                 color: placeholder.fill,
                 name: placeholder.signerName,
                 email: placeholder.signerEmail,
