@@ -197,13 +197,13 @@ class EditorTests(SignElectricTestCase):
 
         self.assertContains(response, 'Your document expired')
 
-    def test_sign_only_by_me_shows_export(self):
+    def test_sign_only_by_me_shows_the_sign_button(self):
         self.upload(make_png())
         document = Document.objects.get()
 
         response = self.client.get(f'/editor/{document.uid}/')
 
-        self.assertContains(response, 'Export')
+        self.assertContains(response, 'onclick="ExportPDF()" disabled>Sign</button>')
         self.assertNotContains(response, 'Add placeholder')
 
     def test_multiple_signing_shows_placeholders_and_send(self):
