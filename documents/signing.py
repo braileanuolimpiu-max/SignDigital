@@ -3,7 +3,7 @@ import os
 from email.utils import formataddr
 
 from django.conf import settings
-from django.core.mail import EmailMessage, EmailMultiAlternatives
+from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
 from django.urls import reverse
 from PIL import Image, ImageDraw, ImageFont
@@ -63,17 +63,16 @@ def send_invitations(document):
             'link': sign_link(signer),
             'placeholder_count': signer.placeholders.count(),
         }
-        text = render_to_string('emails/invitation.txt', context)
         html = render_to_string('emails/invitation.html', context)
 
-        email = EmailMultiAlternatives(
+        email = EmailMessage(
             subject=f'Please sign "{document.filename}"',
-            body=text,
+            body=html,
             from_email=from_address(document.sender_email),
             to=[signer.email],
             reply_to=[document.sender_email],
         )
-        email.attach_alternative(html, 'text/html')
+        email.content_subtype = 'html'
         email.send()
 
 
@@ -97,13 +96,14 @@ def send_signed_copy(document, signer):
         'finished': finished,
         'waiting': document.signers.filter(signed_at__isnull=True),
     }
-    text = render_to_string('emails/signed_copy.txt', context)
+    html = render_to_string('emails/signed_copy.html', context)
 
     email = EmailMessage(
         subject=subject,
-        body=text,
+        body=html,
         from_email=from_address(signer.name),
         to=recipients,
     )
+    email.content_subtype = 'html'
     email.attach(f'{document.filename}.pdf', pdf, 'application/pdf')
     email.send()
