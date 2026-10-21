@@ -11,7 +11,9 @@ from django.test import TestCase
 from django.utils import timezone
 from PIL import Image
 
-from .models import Document, Signer
+from .models import Document, Placeholder, Signer, document_upload_path
+from .signing import draw_signature, from_address, sign_link
+from .views import is_valid_email
 
 
 def make_pdf():
@@ -414,3 +416,71 @@ class SignDocumentTests(SignElectricTestCase):
         response = self.client.get(f'/sign/{random_token}/')
 
         self.assertContains(response, 'This link is no longer active')
+
+
+class UnitTests(TestCase):
+    def test_upload_path_uses_the_uid_and_a_lowercase_extension(self):
+        document = Document()
+
+        path = document_upload_path(document, 'Contract.DOCX')
+
+        expected = os.path.join('documents', str(document.uid), 'original.docx')
+        self.assertEqual(path, expected)
+
+    def test_kind_of_a_pdf(self):
+        document = Document(file='documents/abc/original.pdf')
+
+        self.assertEqual(document.kind, 'pdf')
+
+    def test_kind_of_a_word_file(self):
+        document = Document(file='documents/abc/original.docx')
+
+        self.assertEqual(document.kind, 'word')
+
+    def test_kind_of_an_image(self):
+        document = Document(file='documents/abc/original.png')
+
+        self.assertEqual(document.kind, 'image')
+
+    def test_valid_email(self):
+        self.assertTrue(is_valid_email('ana@example.com'))
+
+    def test_invalid_email(self):
+        self.assertFalse(is_valid_email('ana-at-example'))
+
+    def test_from_address(self):
+        with self.settings(DEFAULT_FROM_EMAIL='site@example.com'):
+            address = from_address('Ana Pop')
+
+        self.assertEqual(address, 'Ana Pop via SignElectric <site@example.com>')
+
+    def test_sign_link(self):
+        signer = Signer()
+
+        with self.settings(SITE_URL='http://example.com'):
+            link = sign_link(signer)
+
+        self.assertEqual(link, f'http://example.com/sign/{signer.token}/')
+
+    def test_everyone_signed(self):
+        document = Document.objects.create(filename='Contract', file='documents/abc/original.pdf')
+        ana = Signer.objects.create(document=document, name='Ana', email='ana@example.com')
+        dan = Signer.objects.create(document=document, name='Dan', email='dan@example.com')
+
+        ana.signed_at = timezone.now()
+        ana.save()
+        self.assertFalse(document.everyone_signed())
+
+        dan.signed_at = timezone.now()
+        dan.save()
+        self.assertTrue(document.everyone_signed())
+
+    def test_draw_signature_writes_on_the_page(self):
+        page = Image.new('RGB', (400, 200), 'white')
+        signer = Signer(name='Ana Pop')
+        box = Placeholder(signer=signer, left=50, top=50, width=300, height=100, font_size=60, color='#000000')
+
+        draw_signature(page, box)
+
+        darkest_color, brightest_color = page.convert('L').getextrema()
+        self.assertLess(darkest_color, 100)
