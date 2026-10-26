@@ -378,6 +378,17 @@
         </div>
     </dialog>
 
+    <dialog id="NameDialog">
+        <h3>Who are you signing as?</h3>
+        <label>Your name
+            <select id="NameChoice"></select>
+        </label>
+        <div class="dialog-buttons">
+            <button type="button" onclick="CloseNameDialog()">Cancel</button>
+            <button type="button" class="primary" onclick="PlaceChosenName()">Place</button>
+        </div>
+    </dialog>
+
     <dialog id="SendDialog">
         <h3>Send for signing</h3>
         <label>Your email
@@ -403,6 +414,7 @@
     const SIGNATURE_FONT = 'Mr De Haviland';
     const TEXT_SIZE = 25;
     const PLACEHOLDER_SIZE = 28;
+    const MIN_FIT_SCALE = 0.5;
 
     const editorData = JSON.parse(document.getElementById('editor-data').textContent);
     const wrapper = document.getElementById('wrapper');
@@ -575,9 +587,13 @@
         return (middleOnScreen - visible.pageTop) / pageCanvas.getZoom();
     }
 
-    function newSignatureText(pageCanvas, left, top) {
+    function newSignatureText(pageCanvas, left, top, label) {
         textCounter = textCounter + 1;
-        const text = new fabric.IText('Semnatura ' + textCounter, {
+        if (label === '') {
+            label = 'Semnatura ' + textCounter;
+        }
+
+        const text = new fabric.IText(label, {
             originX: 'center',
             originY: 'center',
             left: left,
@@ -593,7 +609,7 @@
     function AddText() {
         setActiveCanvas(mostVisibleCanvas());
 
-        const text = newSignatureText(canvas, canvas.pageWidth / 2, middleOfScreenOnPage(canvas));
+        const text = newSignatureText(canvas, canvas.pageWidth / 2, middleOfScreenOnPage(canvas), '');
         canvas.add(text);
         canvas.setActiveObject(text);
         canvas.requestRenderAll();
@@ -860,6 +876,22 @@
         }
     }
 
+    function fitInBox(object, box) {
+        // Shrink the signature when the line is too short or the text above is too close
+        let scale = 1;
+        if (object.width * scale > box.width) {
+            scale = box.width / object.width;
+        }
+        // The font size is about the height of the letters, the text box has empty room around them
+        if (object.fontSize * scale > box.space_above) {
+            scale = box.space_above / object.fontSize;
+        }
+        if (scale < MIN_FIT_SCALE) {
+            scale = MIN_FIT_SCALE;
+        }
+        object.scale(scale);
+    }
+
     function placeSpot(spot) {
         const pageCanvas = pageCanvases[spot.page_number - 1];
         const box = spot.box;
@@ -870,8 +902,9 @@
         if (editorData.mode === 'multi') {
             object = newPlaceholder(pageCanvas, left, lineBottom, spot.name);
         } else {
-            object = newSignatureText(pageCanvas, left, lineBottom);
+            object = newSignatureText(pageCanvas, left, lineBottom, spot.name);
         }
+        fitInBox(object, box);
         object.top = lineBottom - object.getScaledHeight() / 2;
         object.isAutoPlaced = true;
 
@@ -886,10 +919,63 @@
         }, 2500);
     }
 
+    function placeSpots(spots) {
+        removeAutoPlaced();
+        for (const spot of spots) {
+            placeSpot(spot);
+        }
+        showAutoPlaceMessage('Placed ' + spots.length);
+    }
+
+    function namesIn(spots) {
+        const names = [];
+        for (const spot of spots) {
+            if (spot.name !== '' && !names.includes(spot.name)) {
+                names.push(spot.name);
+            }
+        }
+        return names;
+    }
+
+    const nameDialog = document.getElementById('NameDialog');
+    const nameChoice = document.getElementById('NameChoice');
+    let foundSpots = [];
+
+    function openNameDialog(names) {
+        nameChoice.innerHTML = '';
+        for (const name of names) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            nameChoice.appendChild(option);
+        }
+        nameDialog.showModal();
+        nameChoice.focus();
+    }
+
+    function PlaceChosenName() {
+        const chosenSpots = [];
+        for (const spot of foundSpots) {
+            if (spot.name === nameChoice.value) {
+                chosenSpots.push(spot);
+            }
+        }
+        nameDialog.close();
+        placeSpots(chosenSpots);
+    }
+
+    function CloseNameDialog() {
+        nameDialog.close();
+    }
+
     async function AutoPlace() {
         autoPlaceButton.disabled = true;
 
         try {
+            // The signature font must be ready, so the signature sizes are measured right
+            await document.fonts.load('1em "' + SIGNATURE_FONT + '"');
+            fabric.cache.clearFontCache(SIGNATURE_FONT);
+
             const response = await fetch('{% url "autoplace" %}', {
                 method: 'POST',
                 headers: { 'X-CSRFToken': csrfToken },
@@ -900,12 +986,12 @@
                 showAutoPlaceMessage('Not available');
             } else if (result.spots.length === 0) {
                 showAutoPlaceMessage('Nothing found');
+            } else if (editorData.mode === 'solo' && namesIn(result.spots).length > 1) {
+                // Solo signing has one signer, so ask which of the names is you
+                foundSpots = result.spots;
+                openNameDialog(namesIn(result.spots));
             } else {
-                removeAutoPlaced();
-                for (const spot of result.spots) {
-                    placeSpot(spot);
-                }
-                showAutoPlaceMessage('Placed ' + result.spots.length);
+                placeSpots(result.spots);
             }
         } catch (error) {
             showAutoPlaceMessage('Try again');
