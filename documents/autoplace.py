@@ -7,7 +7,10 @@ from .converters import PAGE_DPI
 POINTS_PER_INCH = 72
 SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura']
 MIN_LINE_UNDERSCORES = 3
+MAX_NAME_WORDS = 3
+LINES_CHECKED_UNDER_LABEL = 4
 EMPTY_SPOT_WIDTH_POINTS = 150
+SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
 
 
 def pdf_path_of(document):
@@ -24,7 +27,7 @@ def to_page_pixels(points):
 
 def clean_word(text):
     text = text.lower()
-    text = text.strip(':.,;()[]')
+    text = text.strip(':.,;()[]_')
     return text
 
 
@@ -36,22 +39,39 @@ def is_line_placeholder(text):
     return text.count('_') >= MIN_LINE_UNDERSCORES
 
 
-def signature_box(keyword, underline):
-    if underline is not None:
-        return {
-            'left': underline['left'],
-            'top': underline['top'],
-            'width': underline['width'],
-            'height': underline['height'],
-        }
-
-    gap = keyword['height'] / 2
+def box_of(rect):
     return {
-        'left': keyword['left'] + keyword['width'] + gap,
-        'top': keyword['top'],
-        'width': to_page_pixels(EMPTY_SPOT_WIDTH_POINTS),
-        'height': keyword['height'],
+        'left': to_page_pixels(rect.x0),
+        'top': to_page_pixels(rect.y0),
+        'width': to_page_pixels(rect.width),
+        'height': to_page_pixels(rect.height),
     }
+
+
+def boxes_overlap(first, second):
+    if first['left'] + first['width'] <= second['left']:
+        return False
+    if second['left'] + second['width'] <= first['left']:
+        return False
+    if first['top'] + first['height'] <= second['top']:
+        return False
+    if second['top'] + second['height'] <= first['top']:
+        return False
+    return True
+
+
+def read_signed_areas(page):
+    signed_areas = []
+
+    for widget in page.widgets():
+        if widget.field_type == pymupdf.PDF_WIDGET_TYPE_SIGNATURE and widget.is_signed:
+            signed_areas.append(box_of(widget.rect))
+
+    for annotation in page.annots():
+        if annotation.type[0] in SIGNED_ANNOTATION_TYPES:
+            signed_areas.append(box_of(annotation.rect))
+
+    return signed_areas
 
 
 def read_words(pdf_path):
@@ -76,6 +96,7 @@ def read_words(pdf_path):
                 'width': to_page_pixels(page.rect.width),
                 'height': to_page_pixels(page.rect.height),
                 'words': words,
+                'signed_areas': read_signed_areas(page),
             })
 
     return pages
@@ -89,6 +110,94 @@ def words_on_same_line(words, word):
     return same_line
 
 
+def name_before(line, position):
+    name_words = []
+    for other in line[:position]:
+        if is_signature_word(other['text']) or is_line_placeholder(other['text']):
+            # Everything before belongs to another signer on the same line
+            name_words = []
+        else:
+            name_words.append(other['text'])
+    return name_words
+
+
+def underline_part_of(word):
+    text = word['text']
+    first_underscore = text.index('_')
+    skipped_width = word['width'] * first_underscore / len(text)
+    return {
+        'text': text[first_underscore:],
+        'left': word['left'] + skipped_width,
+        'top': word['top'],
+        'width': word['width'] - skipped_width,
+        'height': word['height'],
+        'block': word['block'],
+        'line': word['line'],
+    }
+
+
+def find_underline(line, position):
+    word = line[position]
+    if is_line_placeholder(word['text']):
+        return underline_part_of(word)
+
+    for other in line[position + 1:]:
+        if is_line_placeholder(other['text']):
+            return other
+        if clean_word(other['text']) != '':
+            return None
+    return None
+
+
+def is_followed_by_text(line, position):
+    word = line[position]
+    if is_line_placeholder(word['text']):
+        return False
+
+    for other in line[position + 1:]:
+        if is_line_placeholder(other['text']) or is_signature_word(other['text']):
+            return False
+        if clean_word(other['text']) != '':
+            return True
+    return False
+
+
+def signature_box(keyword, underline):
+    if underline is not None:
+        return {
+            'left': underline['left'],
+            'top': underline['top'],
+            'width': underline['width'],
+            'height': underline['height'],
+        }
+
+    gap = keyword['height'] / 2
+    return {
+        'left': keyword['left'] + keyword['width'] + gap,
+        'top': keyword['top'],
+        'width': to_page_pixels(EMPTY_SPOT_WIDTH_POINTS),
+        'height': keyword['height'],
+    }
+
+
+def area_under_label(keyword, box):
+    right = box['left'] + box['width']
+    return {
+        'left': keyword['left'],
+        'top': keyword['top'],
+        'width': right - keyword['left'],
+        'height': keyword['height'] * LINES_CHECKED_UNDER_LABEL,
+    }
+
+
+def is_already_signed(page, keyword, box):
+    under_label = area_under_label(keyword, box)
+    for area in page['signed_areas']:
+        if boxes_overlap(area, under_label):
+            return True
+    return False
+
+
 def find_signature_spots(page):
     spots = []
 
@@ -99,22 +208,25 @@ def find_signature_spots(page):
         line = words_on_same_line(page['words'], word)
         position = line.index(word)
 
-        name_words = []
-        for other in line[:position]:
-            name_words.append(other['text'])
+        # "without signature and stamp" or "Signature: 0688..." are not places to sign
+        if is_followed_by_text(line, position):
+            continue
 
-        underline = None
-        for other in line[position + 1:]:
-            if is_line_placeholder(other['text']):
-                underline = other
-                break
+        name_words = name_before(line, position)
+        if len(name_words) > MAX_NAME_WORDS:
+            continue
+
+        underline = find_underline(line, position)
+        box = signature_box(word, underline)
+        if is_already_signed(page, word, box):
+            continue
 
         spots.append({
             'page_number': page['number'],
             'keyword': word,
             'name': ' '.join(name_words),
             'underline': underline,
-            'box': signature_box(word, underline),
+            'box': box,
         })
 
     return spots
@@ -129,7 +241,8 @@ def find_lone_underlines(page, spots):
     lone_underlines = []
     for word in page['words']:
         if is_line_placeholder(word['text']) and word not in used_underlines:
-            lone_underlines.append({'page_number': page['number'], 'underline': word})
+            if not is_signature_word(word['text']):
+                lone_underlines.append({'page_number': page['number'], 'underline': word})
     return lone_underlines
 
 
