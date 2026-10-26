@@ -7,6 +7,7 @@ from .converters import PAGE_DPI
 POINTS_PER_INCH = 72
 SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura']
 MIN_LINE_UNDERSCORES = 3
+EMPTY_SPOT_WIDTH_POINTS = 150
 
 
 def pdf_path_of(document):
@@ -33,6 +34,24 @@ def is_signature_word(text):
 
 def is_line_placeholder(text):
     return text.count('_') >= MIN_LINE_UNDERSCORES
+
+
+def signature_box(keyword, underline):
+    if underline is not None:
+        return {
+            'left': underline['left'],
+            'top': underline['top'],
+            'width': underline['width'],
+            'height': underline['height'],
+        }
+
+    gap = keyword['height'] / 2
+    return {
+        'left': keyword['left'] + keyword['width'] + gap,
+        'top': keyword['top'],
+        'width': to_page_pixels(EMPTY_SPOT_WIDTH_POINTS),
+        'height': keyword['height'],
+    }
 
 
 def read_words(pdf_path):
@@ -95,6 +114,7 @@ def find_signature_spots(page):
             'keyword': word,
             'name': ' '.join(name_words),
             'underline': underline,
+            'box': signature_box(word, underline),
         })
 
     return spots
