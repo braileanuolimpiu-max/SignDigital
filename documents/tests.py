@@ -818,6 +818,56 @@ class AutoPlaceTests(SignElectricTestCase):
         self.assertGreater(first_box['width'], 0)
         self.assertLessEqual(first_box['left'] + first_box['width'], spots[1]['keyword']['left'])
 
+    def test_another_label_above_is_not_a_role(self):
+        page = read_first_page([
+            (72, 580, 'Semnatura'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[1]['name'], '')
+
+    def test_lowercase_word_above_is_not_a_role(self):
+        page = read_first_page([
+            (72, 580, 'aprobat'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], '')
+
+    def test_numbering_before_the_keyword_is_not_a_name(self):
+        page = read_first_page([
+            (72, 580, 'Ana Pop'),
+            (72, 600, '1. Signature: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ana Pop')
+
+    def test_closest_line_above_wins_even_if_written_last(self):
+        # The PDF has the lower line first, like some two-column documents
+        page = read_first_page([
+            (72, 580, 'Ana Pop'),
+            (72, 560, 'Dan Rusu'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ana Pop')
+
+    def test_autoplace_does_not_send_every_word(self):
+        pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        self.assertNotIn('pages', response.json())
+
     def test_autoplace_finds_the_name_label_of_a_signer(self):
         pdf = make_text_pdf([
             (72, 600, 'Semnatura: ________/Ion Pop'),
