@@ -583,10 +583,88 @@ class AutoPlaceTests(SignElectricTestCase):
     def test_underline_without_keyword_is_not_a_spot(self):
         page = read_first_page([(72, 600, 'Date: ______')])
 
+        self.assertEqual(find_signature_spots(page), [])
+        self.assertEqual(find_lone_underlines(page), [])
+
+    def test_signed_by_is_a_label(self):
+        page = read_first_page([(72, 600, 'Signed by: ________')])
+
         spots = find_signature_spots(page)
 
-        self.assertEqual(spots, [])
-        self.assertEqual(len(find_lone_underlines(page, spots)), 1)
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['underline']['text'], '________')
+
+    def test_sign_here_is_a_label(self):
+        page = read_first_page([(72, 600, 'Sign here')])
+
+        self.assertEqual(len(find_signature_spots(page)), 1)
+
+    def test_semnatura_olografa_is_one_label(self):
+        page = read_first_page([(72, 600, 'Semnătura olografă: ________')], font=pymupdf.Font('cjk'))
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['underline']['text'], '________')
+
+    def test_russian_signature_label(self):
+        page = read_first_page([(72, 600, 'Подпись: ________')], font=pymupdf.Font('cjk'))
+
+        self.assertEqual(len(find_signature_spots(page)), 1)
+
+    def test_date_alone_above_is_not_a_role(self):
+        page = read_first_page([
+            (72, 580, 'Data'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], '')
+
+    def test_date_words_above_are_not_a_person(self):
+        page = read_first_page([
+            (72, 580, 'Data Semnarii'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], '')
+
+    def test_underline_alone_on_its_line_is_a_lone_underline(self):
+        page = read_first_page([
+            (72, 600, '______________'),
+            (72, 615, 'Ion Pop'),
+        ])
+
+        lone_underlines = find_lone_underlines(page)
+
+        self.assertEqual(len(lone_underlines), 1)
+        self.assertEqual(lone_underlines[0]['name'], '')
+        self.assertEqual(lone_underlines[0]['box']['width'], lone_underlines[0]['underline']['width'])
+
+    def test_two_lone_underlines_side_by_side(self):
+        page = read_first_page([
+            (72, 600, '______________'),
+            (350, 600, '______________'),
+        ])
+
+        self.assertEqual(len(find_lone_underlines(page)), 2)
+
+    def test_lines_to_write_on_are_not_lone_underlines(self):
+        page = read_first_page([
+            (72, 580, '__________________________'),
+            (72, 600, '__________________________'),
+            (72, 620, '__________________________'),
+        ])
+
+        self.assertEqual(find_lone_underlines(page), [])
+
+    def test_underline_of_a_label_is_not_a_lone_underline(self):
+        page = read_first_page([(72, 600, 'Semnatura: ________/Ion Pop')])
+
+        self.assertEqual(find_lone_underlines(page), [])
 
     def test_name_after_prin_on_the_line_above(self):
         page = read_first_page([
@@ -859,6 +937,15 @@ class AutoPlaceTests(SignElectricTestCase):
         spots = find_signature_spots(page)
 
         self.assertEqual(spots[0]['name'], 'Ana Pop')
+
+    def test_autoplace_returns_the_lone_underlines(self):
+        pdf = make_text_pdf([(72, 600, '______________')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf), 'multi')
+
+        response = self.client.post('/autoplace/')
+
+        self.assertEqual(response.json()['spots'], [])
+        self.assertEqual(len(response.json()['lone_underlines']), 1)
 
     def test_autoplace_does_not_send_every_word(self):
         pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])

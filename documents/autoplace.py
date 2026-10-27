@@ -5,7 +5,10 @@ import pymupdf
 from .converters import PAGE_DPI
 
 POINTS_PER_INCH = 72
-SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura', 'semnatură', 'semnătură']
+SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura', 'semnatură', 'semnătură', 'подпись']
+TWO_WORD_LABELS = ['signed by', 'sign here', 'semnatura olografa', 'semnătura olografă', 'semnătură olografă']
+# Words of a form field, never part of a name or a role
+FIELD_WORDS = ['data', 'date', 'nr', 'no', 'loc', 'place', 'stampila', 'ștampila', 'stamp']
 MIN_LINE_UNDERSCORES = 3
 MAX_NAME_WORDS = 3
 LINES_CHECKED_UNDER_LABEL = 4
@@ -42,7 +45,8 @@ def clean_word(text):
 
 
 def is_signature_word(text):
-    return clean_word(text) in SIGNATURE_KEYWORDS
+    word = clean_word(text)
+    return word in SIGNATURE_KEYWORDS or word in TWO_WORD_LABELS
 
 
 def clean_name(texts):
@@ -122,12 +126,35 @@ def read_words(pdf_path):
     return pages
 
 
-def words_on_same_line(words, word):
-    same_line = []
-    for other in words:
-        if other['block'] == word['block'] and other['line'] == word['line']:
-            same_line.append(other)
-    return same_line
+def join_words(first, second):
+    right = second['left'] + second['width']
+    return {
+        'text': first['text'] + ' ' + second['text'],
+        'left': first['left'],
+        'top': first['top'],
+        'width': right - first['left'],
+        'height': first['height'],
+        'block': first['block'],
+        'line': first['line'],
+    }
+
+
+def join_two_word_labels(line):
+    # "Signed by" or "Semnătura olografă" are two words but one label
+    joined = []
+    position = 0
+    while position < len(line):
+        word = line[position]
+        if position + 1 < len(line):
+            next_word = line[position + 1]
+            two_words = clean_word(word['text']) + ' ' + clean_word(next_word['text'])
+            if two_words in TWO_WORD_LABELS:
+                joined.append(join_words(word, next_word))
+                position = position + 2
+                continue
+        joined.append(word)
+        position = position + 1
+    return joined
 
 
 def name_before(line, position):
@@ -319,6 +346,8 @@ def looks_like_name(texts, min_words):
     for text in texts:
         if clean_word(text) in COMPANY_TYPES or clean_word(text) in COMPANY_INTRODUCERS:
             return False
+        if clean_word(text) in FIELD_WORDS:
+            return False
         letters = clean_word(text).replace('-', '')
         if not letters.isalpha():
             return False
@@ -387,7 +416,7 @@ def role_in_line(words):
     if is_signature_word(text) or not text[0].isupper():
         return ''
     role = clean_word(text)
-    if not role.isalpha():
+    if not role.isalpha() or role in FIELD_WORDS:
         return ''
     return role.capitalize()
 
@@ -481,33 +510,33 @@ def name_label_position(line):
 def find_signature_spots(page):
     spots = []
 
-    for word in page['words']:
-        if not is_signature_word(word['text']):
-            continue
+    for line in lines_of(page):
+        line = join_two_word_labels(line)
 
-        line = words_on_same_line(page['words'], word)
-        position = line.index(word)
+        for position in range(len(line)):
+            if not is_signature_word(line[position]['text']):
+                continue
 
-        # "without signature and stamp" or "Signature: 0688..." are not places to sign
-        if is_followed_by_text(line, position):
-            continue
+            # "without signature and stamp" or "Signature: 0688..." are not places to sign
+            if is_followed_by_text(line, position):
+                continue
 
-        name_words = name_before(line, position)
-        if len(name_words) > MAX_NAME_WORDS:
-            continue
+            name_words = name_before(line, position)
+            if len(name_words) > MAX_NAME_WORDS:
+                continue
 
-        # "1. Signature" has words before it, but they are not a name
-        name = ''
-        if looks_like_name(name_words, 1):
-            name = clean_name(name_words)
-        if name == '':
-            name = name_after_slash(line, position)
-        if name == '':
-            name = name_above(page, line, position)
+            # "1. Signature" has words before it, but they are not a name
+            name = ''
+            if looks_like_name(name_words, 1):
+                name = clean_name(name_words)
+            if name == '':
+                name = name_after_slash(line, position)
+            if name == '':
+                name = name_above(page, line, position)
 
-        spot = build_spot(page, line, position, name)
-        if spot is not None:
-            spots.append(spot)
+            spot = build_spot(page, line, position, name)
+            if spot is not None:
+                spots.append(spot)
 
     return spots
 
@@ -535,18 +564,52 @@ def find_name_label_spots(page, signer_names):
     return spots
 
 
-def find_lone_underlines(page, spots):
-    used_underlines = []
-    for spot in spots:
-        if spot['underline'] is not None:
-            used_underlines.append(spot['underline'])
+def is_underline_only(line):
+    for word in line:
+        if word['text'].strip('_') != '':
+            return False
+    return True
 
-    lone_underlines = []
-    for word in page['words']:
-        if is_line_placeholder(word['text']) and word not in used_underlines:
-            if not is_signature_word(word['text']):
-                lone_underlines.append({'page_number': page['number'], 'underline': word})
-    return lone_underlines
+
+def is_writing_space(line, underline_lines):
+    # Several "______" lines one under the other are space to write, not to sign
+    first = line[0]
+    last = line[-1]
+    for other in underline_lines:
+        if other is line:
+            continue
+        other_first = other[0]
+        other_last = other[-1]
+        if abs(other_first['top'] - first['top']) < first['height'] / 2:
+            continue
+        if abs(other_first['top'] - first['top']) > first['height'] * 3:
+            continue
+        if other_first['left'] >= last['left'] + last['width']:
+            continue
+        if first['left'] >= other_last['left'] + other_last['width']:
+            continue
+        return True
+    return False
+
+
+def find_lone_underlines(page):
+    # A "______" line with no label, often a place to sign with the name under it
+    underline_lines = []
+    for line in lines_of(page):
+        if is_underline_only(line):
+            underline_lines.append(line)
+
+    spots = []
+    for line in underline_lines:
+        if is_writing_space(line, underline_lines):
+            continue
+        for position in range(len(line)):
+            if not is_line_placeholder(line[position]['text']):
+                continue
+            spot = build_spot(page, line, position, '')
+            if spot is not None:
+                spots.append(spot)
+    return spots
 
 
 def analyze_document(document):
@@ -569,11 +632,7 @@ def analyze_document(document):
 
     lone_underlines = []
     for page in pages:
-        page_spots = []
-        for spot in spots:
-            if spot['page_number'] == page['number']:
-                page_spots.append(spot)
-        lone_underlines.extend(find_lone_underlines(page, page_spots))
+        lone_underlines.extend(find_lone_underlines(page))
 
     # Only what the editor needs, not every word of every page
     return {'spots': spots, 'lone_underlines': lone_underlines}
