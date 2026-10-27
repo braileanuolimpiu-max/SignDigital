@@ -127,7 +127,11 @@ import os
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 if os.name == 'nt':
-    POPPLER_PATH = r"C:\Users\cated\AppData\Local\Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\poppler-25.07.0\Library\bin"
+    # Where "winget install oschwartz10612.Poppler" puts Poppler for the current user
+    POPPLER_PATH = os.path.join(
+        os.environ.get('LOCALAPPDATA', ''),
+        r"Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\poppler-25.07.0\Library\bin",
+    )
     LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.com"
 else:
     # On macOS/Linux, Poppler and LibreOffice are usually on the PATH
