@@ -5,7 +5,7 @@ import pymupdf
 from .converters import PAGE_DPI
 
 POINTS_PER_INCH = 72
-SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura']
+SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura', 'semnatură', 'semnătură']
 MIN_LINE_UNDERSCORES = 3
 MAX_NAME_WORDS = 3
 LINES_CHECKED_UNDER_LABEL = 4
@@ -15,7 +15,9 @@ NAME_ENDINGS = ['–', '-', '—']
 COMPANY_TYPES = ['srl', 's.r.l', 'sa', 's.a', 'sc', 'ii', 'llc', 'ltd', 'inc', 'gmbh']
 COMPANY_INTRODUCERS = ['for', 'pentru']
 QUOTES = '"\'“”„«»'
+NAME_PUNCTUATION = ':,;'
 EMPTY_SPOT_WIDTH_POINTS = 150
+MIN_EMPTY_SPOT_WIDTH_POINTS = 60
 PAGE_MARGIN_POINTS = 36
 MAX_SPACE_ABOVE_POINTS = 60
 SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
@@ -41,6 +43,16 @@ def clean_word(text):
 
 def is_signature_word(text):
     return clean_word(text) in SIGNATURE_KEYWORDS
+
+
+def clean_name(texts):
+    # "Ion Pop:" or "Ana Rusu," becomes "Ion Pop" and "Ana Rusu"
+    name_words = []
+    for text in texts:
+        text = text.strip(NAME_PUNCTUATION)
+        if text != '':
+            name_words.append(text)
+    return ' '.join(name_words)
 
 
 def is_line_placeholder(text):
@@ -197,9 +209,28 @@ def signature_box(keyword, underline, right_limit):
     if left + width > right_limit:
         width = right_limit - left
 
+    if width < to_page_pixels(MIN_EMPTY_SPOT_WIDTH_POINTS):
+        return box_under_label(keyword, right_limit)
+
     return {
         'left': left,
         'top': keyword['top'],
+        'width': width,
+        'height': keyword['height'],
+    }
+
+
+def box_under_label(keyword, right_limit):
+    # No room after the label (page edge or the next label), so sign on the line under it
+    width = to_page_pixels(EMPTY_SPOT_WIDTH_POINTS)
+    if keyword['left'] + width > right_limit:
+        width = right_limit - keyword['left']
+    if width < keyword['width']:
+        width = keyword['width']
+
+    return {
+        'left': keyword['left'],
+        'top': keyword['top'] + keyword['height'] * 2,
         'width': width,
         'height': keyword['height'],
     }
@@ -309,11 +340,11 @@ def person_in_line(words):
         if clean_word(texts[index]) in NAME_INTRODUCERS:
             after = texts[index + 1:]
             if looks_like_name(after, 1):
-                return ' '.join(after)
+                return clean_name(after)
 
     # A line that is only a name, like "Corasevici Mihail"
     if looks_like_name(texts, 2):
-        return ' '.join(texts)
+        return clean_name(texts)
     return ''
 
 
@@ -389,7 +420,7 @@ def name_after_slash(line, position):
 
     name_texts = rest.split('/')[1].split()
     if looks_like_name(name_texts, 1):
-        return ' '.join(name_texts)
+        return clean_name(name_texts)
     return ''
 
 
@@ -457,7 +488,7 @@ def find_signature_spots(page):
         if len(name_words) > MAX_NAME_WORDS:
             continue
 
-        name = ' '.join(name_words)
+        name = clean_name(name_words)
         if name == '':
             name = name_after_slash(line, position)
         if name == '':
@@ -481,8 +512,8 @@ def find_name_label_spots(page, signer_names):
 
         texts = []
         for word in line[:position + 1]:
-            texts.append(word['text'].strip(':'))
-        name = ' '.join(texts)
+            texts.append(word['text'])
+        name = clean_name(texts)
         if name not in signer_names:
             continue
 

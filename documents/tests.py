@@ -45,11 +45,17 @@ def make_jpeg():
     return SimpleUploadedFile('page.jpg', buffer.getvalue(), content_type='image/jpeg')
 
 
-def make_text_pdf(lines, stamp=None):
+def make_text_pdf(lines, stamp=None, font=None):
+    # The default font has no Romanian letters, so pass a font for text like "Semnătură"
     pdf = pymupdf.open()
     page = pdf.new_page()
     for x, y, text in lines:
-        page.insert_text((x, y), text)
+        if font is None:
+            page.insert_text((x, y), text)
+        else:
+            writer = pymupdf.TextWriter(page.rect)
+            writer.append((x, y), text, font=font)
+            writer.write_text(page)
     if stamp is not None:
         page.add_stamp_annot(pymupdf.Rect(stamp))
 
@@ -58,11 +64,11 @@ def make_text_pdf(lines, stamp=None):
     return data
 
 
-def read_first_page(lines, stamp=None):
+def read_first_page(lines, stamp=None, font=None):
     with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, 'contract.pdf')
         with open(path, 'wb') as file:
-            file.write(make_text_pdf(lines, stamp))
+            file.write(make_text_pdf(lines, stamp, font))
         pages = read_words(path)
     return pages[0]
 
@@ -752,6 +758,65 @@ class AutoPlaceTests(SignElectricTestCase):
         spots = find_name_label_spots(page, ['Ion Pop'])
 
         self.assertEqual(spots, [])
+
+    def test_name_above_has_no_colon_or_comma(self):
+        page = read_first_page([
+            (72, 560, 'Ion Pop:'),
+            (72, 580, 'Ana Rusu,'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ana Rusu')
+
+    def test_name_before_the_keyword_has_no_comma(self):
+        page = read_first_page([(72, 600, 'Vadim, signature: ________')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Vadim')
+
+    def test_name_label_above_the_keyword_is_found_once_more(self):
+        page = read_first_page([
+            (72, 580, 'Ion Pop:'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ion Pop')
+        self.assertEqual(len(find_name_label_spots(page, ['Ion Pop'])), 1)
+
+    def test_semnatura_with_romanian_letters(self):
+        page = read_first_page([
+            (72, 500, 'Semnătura: ________'),
+            (72, 600, 'Semnătură: ________'),
+        ], font=pymupdf.Font('cjk'))
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 2)
+
+    def test_label_at_the_right_edge_gets_the_line_under_it(self):
+        page = read_first_page([(540, 600, 'Signature')])
+
+        spots = find_signature_spots(page)
+
+        box = spots[0]['box']
+        keyword = spots[0]['keyword']
+        self.assertGreater(box['width'], 0)
+        self.assertGreater(box['top'], keyword['top'] + keyword['height'])
+        self.assertLessEqual(box['left'] + box['width'], page['width'])
+
+    def test_close_labels_get_the_line_under_them(self):
+        page = read_first_page([(72, 600, 'Semnatura Semnatura')])
+
+        spots = find_signature_spots(page)
+
+        first_box = spots[0]['box']
+        self.assertGreater(first_box['width'], 0)
+        self.assertLessEqual(first_box['left'] + first_box['width'], spots[1]['keyword']['left'])
 
     def test_autoplace_finds_the_name_label_of_a_signer(self):
         pdf = make_text_pdf([
