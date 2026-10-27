@@ -348,7 +348,9 @@
         <div class="toolbar-group spacer">
             <span class="group-label">Document</span>
             <div class="group-controls">
+                {% if can_autoplace %}
                 <button type="button" id="AutoPlaceButton" onclick="AutoPlace()"><span class="label-long">Auto Place</span><span class="label-short">Auto</span></button>
+                {% endif %}
                 <a href="{{ original_url }}" target="_blank">Open original</a>
                 {% if mode == 'multi' %}
                 <button type="button" class="primary" id="FinishButton" onclick="OpenSendDialog()" disabled>Sign &amp; send</button>
@@ -863,8 +865,8 @@
         return await response.blob();
     }
 
+    // Images have no Auto Place button, so this is only used on PDF and Word files
     const autoPlaceButton = document.getElementById('AutoPlaceButton');
-    const autoPlaceLabel = autoPlaceButton.querySelector('.label-long');
 
     function removeAutoPlaced() {
         for (const pageCanvas of pageCanvases) {
@@ -913,6 +915,7 @@
     }
 
     function showAutoPlaceMessage(message) {
+        const autoPlaceLabel = autoPlaceButton.querySelector('.label-long');
         autoPlaceLabel.textContent = message;
         setTimeout(function () {
             autoPlaceLabel.textContent = 'Auto Place';
