@@ -95,6 +95,7 @@ hidden for them) and looks for places to sign:
 
 - Labels like `Signature`, `Semnătura`, `Signed by`, `Sign here`, `Semnătura olografă`, `Подпись`
 - The line after the label, typed (`________`) or drawn by Word (underlined spaces)
+- An empty box after or under the label, or the empty room under the label in a table cell
 - The signer's name: before the label, after a slash (`____ /Ion Pop/`), or on the lines
   above it (`SRL Sugar Soft prin Ion Pop`, a company name, or a role like `Prestator`)
 - In **Multiple signing**, also lines with no label (typed or drawn), often with the name under them

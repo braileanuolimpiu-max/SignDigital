@@ -52,14 +52,18 @@ def make_jpeg():
     return SimpleUploadedFile('page.jpg', buffer.getvalue(), content_type='image/jpeg')
 
 
-def make_text_pdf(lines, stamp=None, font=None, drawn=None):
+def make_text_pdf(lines, stamp=None, font=None, drawn=None, rects=None):
     # The default font has no Romanian letters, so pass a font for text like "Semnătură"
     # "drawn" is a list of lines (x0, y0, x1, y1), like the lines Word draws
+    # "rects" is a list of rectangles (x0, y0, x1, y1), like boxes and table cells
     pdf = pymupdf.open()
     page = pdf.new_page()
     if drawn is not None:
         for x0, y0, x1, y1 in drawn:
             page.draw_line((x0, y0), (x1, y1))
+    if rects is not None:
+        for x0, y0, x1, y1 in rects:
+            page.draw_rect(pymupdf.Rect(x0, y0, x1, y1))
     for x, y, text in lines:
         if font is None:
             page.insert_text((x, y), text)
@@ -75,11 +79,11 @@ def make_text_pdf(lines, stamp=None, font=None, drawn=None):
     return data
 
 
-def read_first_page(lines, stamp=None, font=None, drawn=None):
+def read_first_page(lines, stamp=None, font=None, drawn=None, rects=None):
     with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, 'contract.pdf')
         with open(path, 'wb') as file:
-            file.write(make_text_pdf(lines, stamp, font, drawn))
+            file.write(make_text_pdf(lines, stamp, font, drawn, rects))
         pages = read_words(path)
     return pages[0]
 
@@ -759,6 +763,67 @@ class AutoPlaceTests(SignElectricTestCase):
 
     def test_line_across_the_page_is_not_a_lone_underline(self):
         page = read_first_page([], drawn=[(40, 600, 560, 600)])
+
+        self.assertEqual(find_lone_drawn_lines(page), [])
+
+    def test_empty_box_after_the_label(self):
+        page = read_first_page([(72, 600, 'Signature:')], rects=[(140, 580, 300, 620)])
+
+        box = find_signature_spots(page)[0]['box']
+
+        self.assertAlmostEqual(box['left'], to_page_pixels(143), places=0)
+        self.assertAlmostEqual(box['width'], to_page_pixels(154), places=0)
+        self.assertAlmostEqual(box['top'] + box['height'], to_page_pixels(617), places=0)
+        self.assertAlmostEqual(box['space_above'], to_page_pixels(34), places=0)
+
+    def test_box_with_text_inside_is_not_a_signature_box(self):
+        page = read_first_page(
+            [(72, 600, 'Signature:'), (150, 600, 'Ion')],
+            rects=[(140, 580, 300, 620)],
+        )
+
+        box = find_signature_spots(page)[0]['box']
+
+        self.assertNotAlmostEqual(box['left'], to_page_pixels(143), places=0)
+
+    def test_empty_box_under_the_label(self):
+        page = read_first_page([(72, 600, 'Signature:')], rects=[(72, 610, 250, 660)])
+
+        box = find_signature_spots(page)[0]['box']
+
+        self.assertAlmostEqual(box['left'], to_page_pixels(75), places=0)
+        self.assertAlmostEqual(box['top'] + box['height'], to_page_pixels(657), places=0)
+
+    def test_room_under_the_label_in_a_table_cell(self):
+        page = read_first_page(
+            [
+                (80, 520, 'Prestator'),
+                (80, 540, 'Semnatura'),
+                (300, 520, 'Beneficiar'),
+                (300, 540, 'Semnatura'),
+            ],
+            drawn=[(286, 500, 286, 620)],
+            rects=[(72, 500, 500, 620)],
+        )
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 2)
+        self.assertEqual(spots[0]['name'], 'Prestator')
+        self.assertEqual(spots[1]['name'], 'Beneficiar')
+        first_box = spots[0]['box']
+        self.assertLess(first_box['left'] + first_box['width'], to_page_pixels(286))
+        self.assertAlmostEqual(first_box['top'] + first_box['height'], to_page_pixels(617), places=0)
+
+    def test_label_in_a_full_cell_stays_inside_the_cell(self):
+        page = read_first_page([(80, 600, 'Semnatura')], rects=[(72, 580, 230, 610)])
+
+        box = find_signature_spots(page)[0]['box']
+
+        self.assertLess(box['left'] + box['width'], to_page_pixels(230))
+
+    def test_sides_of_a_box_are_not_lone_underlines(self):
+        page = read_first_page([], rects=[(72, 580, 250, 620)])
 
         self.assertEqual(find_lone_drawn_lines(page), [])
 

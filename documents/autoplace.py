@@ -30,6 +30,11 @@ MIN_DRAWN_LINE_POINTS = 40
 MAX_LONE_LINE_POINTS = 300
 MAX_LABEL_GAP_POINTS = 72
 DRAWN_LINE_BOX_POINTS = 12
+# Boxes to sign in: an empty box after a label, or a table cell with room under the label
+FRAME_GAP_POINTS = 3
+FRAME_PADDING_POINTS = 3
+MIN_ROOM_POINTS = 15
+MAX_BOX_HEIGHT_POINTS = 200
 SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
 
 
@@ -110,24 +115,7 @@ def read_signed_areas(page):
     return signed_areas
 
 
-def segment_of(item):
-    # A drawn line, or a rectangle so thin that it looks like a line
-    if item[0] == 'l':
-        start = item[1]
-        end = item[2]
-        x0 = start.x
-        y0 = start.y
-        x1 = end.x
-        y1 = end.y
-    elif item[0] == 're':
-        rect = item[1]
-        x0 = rect.x0
-        y0 = rect.y0
-        x1 = rect.x1
-        y1 = rect.y1
-    else:
-        return None
-
+def make_segment(x0, y0, x1, y1):
     # A line can be drawn from right to left, so put the smaller numbers first
     return {
         'x0': min(x0, x1),
@@ -135,6 +123,27 @@ def segment_of(item):
         'x1': max(x0, x1),
         'y1': max(y0, y1),
     }
+
+
+def segments_of(item):
+    # A drawn line is one segment, a rectangle is its four sides
+    if item[0] == 'l':
+        start = item[1]
+        end = item[2]
+        return [make_segment(start.x, start.y, end.x, end.y)]
+
+    if item[0] == 're':
+        rect = item[1]
+        # A rectangle so thin that it looks like a line
+        if rect.width <= THIN_LINE_POINTS or rect.height <= THIN_LINE_POINTS:
+            return [make_segment(rect.x0, rect.y0, rect.x1, rect.y1)]
+        top = make_segment(rect.x0, rect.y0, rect.x1, rect.y0)
+        bottom = make_segment(rect.x0, rect.y1, rect.x1, rect.y1)
+        left = make_segment(rect.x0, rect.y0, rect.x0, rect.y1)
+        right = make_segment(rect.x1, rect.y0, rect.x1, rect.y1)
+        return [top, bottom, left, right]
+
+    return []
 
 
 def add_to_lines(lines, segment):
@@ -164,25 +173,28 @@ def touches_vertical(line, vertical_lines):
     return False
 
 
-def read_drawn_lines(page):
+def read_lines(page):
     horizontal_lines = []
     vertical_lines = []
 
     for drawing in page.get_drawings():
         for item in drawing['items']:
-            segment = segment_of(item)
-            if segment is None:
-                continue
-            if segment['y1'] - segment['y0'] <= THIN_LINE_POINTS:
-                add_to_lines(horizontal_lines, segment)
-            elif segment['x1'] - segment['x0'] <= THIN_LINE_POINTS:
-                vertical_lines.append(segment)
+            for segment in segments_of(item):
+                if segment['y1'] - segment['y0'] <= THIN_LINE_POINTS:
+                    add_to_lines(horizontal_lines, segment)
+                elif segment['x1'] - segment['x0'] <= THIN_LINE_POINTS:
+                    vertical_lines.append(segment)
 
+    return {'horizontal': horizontal_lines, 'vertical': vertical_lines}
+
+
+def drawn_lines_of(lines):
+    # The lines to sign on: long enough, and not the side of a table or a box
     drawn_lines = []
-    for line in horizontal_lines:
+    for line in lines['horizontal']:
         if line['x1'] - line['x0'] < MIN_DRAWN_LINE_POINTS:
             continue
-        if touches_vertical(line, vertical_lines):
+        if touches_vertical(line, lines['vertical']):
             continue
         drawn_lines.append({
             'left': to_page_pixels(line['x0']),
@@ -190,6 +202,18 @@ def read_drawn_lines(page):
             'y': to_page_pixels(line['y0']),
         })
     return drawn_lines
+
+
+def in_page_pixels(segments):
+    converted = []
+    for segment in segments:
+        converted.append({
+            'x0': to_page_pixels(segment['x0']),
+            'y0': to_page_pixels(segment['y0']),
+            'x1': to_page_pixels(segment['x1']),
+            'y1': to_page_pixels(segment['y1']),
+        })
+    return converted
 
 
 def read_words(pdf_path):
@@ -209,13 +233,16 @@ def read_words(pdf_path):
                     'line': line,
                 })
 
+            lines = read_lines(page)
             pages.append({
                 'number': page.number + 1,
                 'width': to_page_pixels(page.rect.width),
                 'height': to_page_pixels(page.rect.height),
                 'words': words,
                 'signed_areas': read_signed_areas(page),
-                'drawn_lines': read_drawn_lines(page),
+                'drawn_lines': drawn_lines_of(lines),
+                'horizontal_lines': in_page_pixels(lines['horizontal']),
+                'vertical_lines': in_page_pixels(lines['vertical']),
             })
 
     return pages
@@ -520,6 +547,15 @@ def role_in_line(words):
 
 def name_above(page, line, position):
     column_start, column_end = column_of(line, position, page['width'])
+
+    # In a table, the name is in the same cell as the label
+    frame = frame_around_word(page, line[position])
+    if frame is not None:
+        if frame['left'] > column_start:
+            column_start = frame['left']
+        if frame['right'] < column_end:
+            column_end = frame['right']
+
     above = lines_above(page, line[position], column_start, column_end)
 
     for words in above:
@@ -587,16 +623,189 @@ def drawn_line_after(page, keyword, right_limit):
     return None
 
 
+def closest_line_left(vertical_lines, x, y):
+    closest = None
+    for line in vertical_lines:
+        if line['y0'] <= y <= line['y1'] and line['x0'] < x:
+            if closest is None or line['x0'] > closest['x0']:
+                closest = line
+    return closest
+
+
+def closest_line_right(vertical_lines, x, y):
+    closest = None
+    for line in vertical_lines:
+        if line['y0'] <= y <= line['y1'] and line['x0'] > x:
+            if closest is None or line['x0'] < closest['x0']:
+                closest = line
+    return closest
+
+
+def closest_line_above(horizontal_lines, x, y):
+    closest = None
+    for line in horizontal_lines:
+        if line['x0'] <= x <= line['x1'] and line['y0'] < y:
+            if closest is None or line['y0'] > closest['y0']:
+                closest = line
+    return closest
+
+
+def closest_line_below(horizontal_lines, x, y):
+    closest = None
+    for line in horizontal_lines:
+        if line['x0'] <= x <= line['x1'] and line['y0'] > y:
+            if closest is None or line['y0'] < closest['y0']:
+                closest = line
+    return closest
+
+
+def frame_around(page, x, y):
+    # The box or table cell around the point (x, y), or None
+    left = closest_line_left(page['vertical_lines'], x, y)
+    right = closest_line_right(page['vertical_lines'], x, y)
+    top = closest_line_above(page['horizontal_lines'], x, y)
+    bottom = closest_line_below(page['horizontal_lines'], x, y)
+    if left is None or right is None or top is None or bottom is None:
+        return None
+
+    # The four sides must meet, or they are lines from different places
+    gap = to_page_pixels(FRAME_GAP_POINTS)
+    for side in [left, right]:
+        if side['y0'] > top['y0'] + gap or side['y1'] < bottom['y0'] - gap:
+            return None
+    for side in [top, bottom]:
+        if side['x0'] > left['x0'] + gap or side['x1'] < right['x0'] - gap:
+            return None
+
+    return {
+        'left': left['x0'],
+        'right': right['x0'],
+        'top': top['y0'],
+        'bottom': bottom['y0'],
+    }
+
+
+def frame_around_word(page, word):
+    middle_x = word['left'] + word['width'] / 2
+    middle_y = word['top'] + word['height'] / 2
+    return frame_around(page, middle_x, middle_y)
+
+
+def has_words_inside(page, frame):
+    for word in page['words']:
+        middle_x = word['left'] + word['width'] / 2
+        middle_y = word['top'] + word['height'] / 2
+        if frame['left'] < middle_x < frame['right'] and frame['top'] < middle_y < frame['bottom']:
+            return True
+    return False
+
+
+def box_in_frame(left, right, top, bottom):
+    # The signature stands on the bottom of the room and can be as tall as the room
+    padding = to_page_pixels(FRAME_PADDING_POINTS)
+    height = to_page_pixels(DRAWN_LINE_BOX_POINTS)
+    return {
+        'left': left + padding,
+        'top': bottom - padding - height,
+        'width': right - left - padding * 2,
+        'height': height,
+        'space_above': bottom - top - padding * 2,
+    }
+
+
+def empty_box_next_to(page, keyword, right_limit):
+    # "Signature:" with an empty box after it, or right under it
+    keyword_right = keyword['left'] + keyword['width']
+    keyword_middle = keyword['top'] + keyword['height'] / 2
+    keyword_center = keyword['left'] + keyword['width'] / 2
+    keyword_bottom = keyword['top'] + keyword['height']
+    gap = to_page_pixels(FRAME_GAP_POINTS)
+
+    # Points just inside the boxes that could belong to the label
+    points = []
+    for vertical in page['vertical_lines']:
+        if vertical['y0'] > keyword_middle or vertical['y1'] < keyword_middle:
+            continue
+        if vertical['x0'] < keyword_right - keyword['height'] / 2:
+            continue
+        if vertical['x0'] > keyword_right + to_page_pixels(MAX_LABEL_GAP_POINTS):
+            continue
+        if vertical['x0'] >= right_limit:
+            continue
+        points.append([vertical['x0'] + gap, keyword_middle])
+    for horizontal in page['horizontal_lines']:
+        if horizontal['x0'] > keyword_center or horizontal['x1'] < keyword_center:
+            continue
+        if horizontal['y0'] < keyword_bottom - keyword['height'] / 2:
+            continue
+        if horizontal['y0'] > keyword_bottom + keyword['height'] * 2:
+            continue
+        points.append([keyword_center, horizontal['y0'] + gap])
+
+    for point in points:
+        frame = frame_around(page, point[0], point[1])
+        if frame is None or has_words_inside(page, frame):
+            continue
+        width = frame['right'] - frame['left']
+        height = frame['bottom'] - frame['top']
+        if width < to_page_pixels(MIN_EMPTY_SPOT_WIDTH_POINTS):
+            continue
+        if height < to_page_pixels(MIN_ROOM_POINTS) or height > to_page_pixels(MAX_BOX_HEIGHT_POINTS):
+            continue
+        return box_in_frame(frame['left'], frame['right'], frame['top'], frame['bottom'])
+    return None
+
+
+def room_under_label(page, keyword, frame):
+    # A table cell like "Semnătura" with empty room under it
+    if frame is None:
+        return None
+
+    keyword_bottom = keyword['top'] + keyword['height']
+    room_bottom = frame['bottom']
+    for word in page['words']:
+        if word['top'] < keyword_bottom - keyword['height'] / 2:
+            continue
+        if word['left'] < frame['left'] or word['left'] > frame['right']:
+            continue
+        if word['top'] < room_bottom:
+            room_bottom = word['top']
+
+    if room_bottom - keyword_bottom < to_page_pixels(MIN_ROOM_POINTS):
+        return None
+
+    # Under the label, not in the middle of a wide box
+    right = keyword['left'] + to_page_pixels(EMPTY_SPOT_WIDTH_POINTS)
+    if right > frame['right']:
+        right = frame['right']
+    return box_in_frame(keyword['left'], right, keyword_bottom, room_bottom)
+
+
 def build_spot(page, line, position, name):
     keyword = line[position]
-    underline = find_underline(line, position)
     right_limit = right_limit_of(line, position, page['width'])
+
+    # Inside a table cell, stay inside the cell
+    frame = frame_around_word(page, keyword)
+    if frame is not None and frame['right'] < right_limit:
+        right_limit = frame['right'] - to_page_pixels(FRAME_PADDING_POINTS)
+
+    underline = find_underline(line, position)
     if underline is None:
         underline = drawn_line_after(page, keyword, right_limit)
-    box = signature_box(keyword, underline, right_limit)
+
+    box = None
+    if underline is None:
+        box = empty_box_next_to(page, keyword, right_limit)
+    if underline is None and box is None:
+        box = room_under_label(page, keyword, frame)
+    if box is None:
+        box = signature_box(keyword, underline, right_limit)
+
     if is_already_signed(page, keyword, box):
         return None
-    box['space_above'] = space_above(page, box)
+    if 'space_above' not in box:
+        box['space_above'] = space_above(page, box)
 
     return {
         'page_number': page['number'],
