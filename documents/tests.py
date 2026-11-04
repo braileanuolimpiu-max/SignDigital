@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import tempfile
 import uuid
 from datetime import timedelta
 from unittest.mock import patch
@@ -10,7 +11,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.utils import timezone
 from PIL import Image
+import pymupdf
 
+from .autoplace import find_lone_underlines, find_signature_spots, read_words
 from .models import Document, Placeholder, Signer, document_upload_path
 from .signing import draw_signature, from_address, sign_link
 from .views import is_valid_email
@@ -40,6 +43,28 @@ def make_jpeg():
     buffer = io.BytesIO()
     image.save(buffer, 'JPEG')
     return SimpleUploadedFile('page.jpg', buffer.getvalue(), content_type='image/jpeg')
+
+
+def make_text_pdf(lines, stamp=None):
+    pdf = pymupdf.open()
+    page = pdf.new_page()
+    for x, y, text in lines:
+        page.insert_text((x, y), text)
+    if stamp is not None:
+        page.add_stamp_annot(pymupdf.Rect(stamp))
+
+    data = pdf.tobytes()
+    pdf.close()
+    return data
+
+
+def read_first_page(lines, stamp=None):
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'contract.pdf')
+        with open(path, 'wb') as file:
+            file.write(make_text_pdf(lines, stamp))
+        pages = read_words(path)
+    return pages[0]
 
 
 def placeholder(name, email):
@@ -484,3 +509,98 @@ class UnitTests(TestCase):
 
         darkest_color, brightest_color = page.convert('L').getextrema()
         self.assertLess(darkest_color, 100)
+
+
+class AutoPlaceTests(SignElectricTestCase):
+    def test_spot_is_on_the_underline(self):
+        page = read_first_page([(72, 600, 'Signature: ________')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['underline']['text'], '________')
+        self.assertEqual(spots[0]['box']['left'], spots[0]['underline']['left'])
+
+    def test_name_before_the_keyword(self):
+        page = read_first_page([(72, 600, 'Vadim signature: ________')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Vadim')
+
+    def test_keyword_without_underline_gets_the_space_after_it(self):
+        page = read_first_page([(72, 600, 'Signature')])
+
+        spots = find_signature_spots(page)
+
+        keyword = spots[0]['keyword']
+        self.assertIsNone(spots[0]['underline'])
+        self.assertGreater(spots[0]['box']['left'], keyword['left'] + keyword['width'])
+
+    def test_keyword_glued_to_the_underline(self):
+        page = read_first_page([(72, 600, 'Semnatura__________')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['underline']['text'], '__________')
+        self.assertGreater(spots[0]['box']['left'], spots[0]['keyword']['left'])
+
+    def test_two_signers_on_the_same_line(self):
+        page = read_first_page([(72, 600, 'Ana signature: ______   Dan signature: ______')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ana')
+        self.assertEqual(spots[1]['name'], 'Dan')
+
+    def test_keyword_inside_a_sentence_is_skipped(self):
+        page = read_first_page([(72, 600, 'The copy is valid without signature and stamp.')])
+
+        self.assertEqual(find_signature_spots(page), [])
+
+    def test_filled_signature_field_is_skipped(self):
+        page = read_first_page([(72, 600, 'Mobile Electronic Signature: 068888176')])
+
+        self.assertEqual(find_signature_spots(page), [])
+
+    def test_long_text_before_the_keyword_is_skipped(self):
+        page = read_first_page([(72, 600, 'Please make sure to add your signature: ______')])
+
+        self.assertEqual(find_signature_spots(page), [])
+
+    def test_already_signed_spot_is_skipped(self):
+        page = read_first_page([(72, 600, 'Signature')], stamp=(120, 585, 300, 640))
+
+        self.assertEqual(find_signature_spots(page), [])
+
+    def test_underline_without_keyword_is_not_a_spot(self):
+        page = read_first_page([(72, 600, 'Date: ______')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots, [])
+        self.assertEqual(len(find_lone_underlines(page, spots)), 1)
+
+    def test_autoplace_returns_the_spots_of_the_uploaded_pdf(self):
+        pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        spots = response.json()['spots']
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['name'], 'Vadim')
+        self.assertEqual(spots[0]['page_number'], 1)
+
+    def test_autoplace_finds_nothing_in_an_image(self):
+        self.upload(make_png())
+
+        response = self.client.post('/autoplace/')
+
+        self.assertEqual(response.json()['spots'], [])
+
+    def test_autoplace_without_a_document(self):
+        response = self.client.post('/autoplace/')
+
+        self.assertEqual(response.status_code, 410)
