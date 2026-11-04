@@ -13,7 +13,14 @@ from django.utils import timezone
 from PIL import Image
 import pymupdf
 
-from .autoplace import find_lone_underlines, find_name_label_spots, find_signature_spots, read_words
+from .autoplace import (
+    find_lone_drawn_lines,
+    find_lone_underlines,
+    find_name_label_spots,
+    find_signature_spots,
+    read_words,
+    to_page_pixels,
+)
 from .models import Document, Placeholder, Signer, document_upload_path
 from .signing import draw_signature, from_address, sign_link
 from .views import is_valid_email
@@ -45,10 +52,14 @@ def make_jpeg():
     return SimpleUploadedFile('page.jpg', buffer.getvalue(), content_type='image/jpeg')
 
 
-def make_text_pdf(lines, stamp=None, font=None):
+def make_text_pdf(lines, stamp=None, font=None, drawn=None):
     # The default font has no Romanian letters, so pass a font for text like "Semnătură"
+    # "drawn" is a list of lines (x0, y0, x1, y1), like the lines Word draws
     pdf = pymupdf.open()
     page = pdf.new_page()
+    if drawn is not None:
+        for x0, y0, x1, y1 in drawn:
+            page.draw_line((x0, y0), (x1, y1))
     for x, y, text in lines:
         if font is None:
             page.insert_text((x, y), text)
@@ -64,11 +75,11 @@ def make_text_pdf(lines, stamp=None, font=None):
     return data
 
 
-def read_first_page(lines, stamp=None, font=None):
+def read_first_page(lines, stamp=None, font=None, drawn=None):
     with tempfile.TemporaryDirectory() as folder:
         path = os.path.join(folder, 'contract.pdf')
         with open(path, 'wb') as file:
-            file.write(make_text_pdf(lines, stamp, font))
+            file.write(make_text_pdf(lines, stamp, font, drawn))
         pages = read_words(path)
     return pages[0]
 
@@ -681,6 +692,75 @@ class AutoPlaceTests(SignElectricTestCase):
         page = read_first_page([(72, 600, 'Semnatura: ________/Ion Pop')])
 
         self.assertEqual(find_lone_underlines(page), [])
+
+    def test_label_with_a_drawn_line_after_it(self):
+        page = read_first_page([(72, 600, 'Semnatura:')], drawn=[(140, 602, 300, 602)])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 1)
+        self.assertAlmostEqual(spots[0]['box']['left'], to_page_pixels(140), places=0)
+        self.assertAlmostEqual(spots[0]['box']['width'], to_page_pixels(160), places=0)
+
+    def test_drawn_line_in_many_pieces_is_one_line(self):
+        pieces = []
+        for x in range(140, 300, 4):
+            pieces.append((x, 602, x + 4, 602))
+        page = read_first_page([(72, 600, 'Semnatura:')], drawn=pieces)
+
+        spots = find_signature_spots(page)
+
+        self.assertAlmostEqual(spots[0]['box']['width'], to_page_pixels(160), places=0)
+
+    def test_drawn_line_far_from_the_label_is_not_its_line(self):
+        page = read_first_page([(72, 600, 'Semnatura:')], drawn=[(400, 602, 500, 602)])
+
+        spots = find_signature_spots(page)
+
+        self.assertNotAlmostEqual(spots[0]['box']['left'], to_page_pixels(400), places=0)
+
+    def test_drawn_line_alone_is_a_lone_underline(self):
+        page = read_first_page([(72, 615, 'Ion Pop')], drawn=[(72, 600, 250, 600)])
+
+        lone_lines = find_lone_drawn_lines(page)
+
+        self.assertEqual(len(lone_lines), 1)
+        self.assertEqual(lone_lines[0]['name'], '')
+        self.assertAlmostEqual(lone_lines[0]['box']['width'], to_page_pixels(178), places=0)
+
+    def test_underlined_text_is_not_a_lone_underline(self):
+        page = read_first_page([(72, 600, 'Important conditions')], drawn=[(72, 602, 200, 602)])
+
+        self.assertEqual(find_lone_drawn_lines(page), [])
+
+    def test_label_line_is_not_a_lone_underline(self):
+        page = read_first_page([(72, 600, 'Data:')], drawn=[(110, 602, 250, 602)])
+
+        self.assertEqual(find_lone_drawn_lines(page), [])
+
+    def test_table_lines_are_not_lone_underlines(self):
+        page = read_first_page([], drawn=[
+            (72, 500, 300, 500),
+            (72, 600, 300, 600),
+            (72, 500, 72, 600),
+            (300, 500, 300, 600),
+        ])
+
+        self.assertEqual(find_lone_drawn_lines(page), [])
+
+    def test_drawn_lines_to_write_on_are_not_lone_underlines(self):
+        page = read_first_page([], drawn=[
+            (72, 580, 300, 580),
+            (72, 600, 300, 600),
+            (72, 620, 300, 620),
+        ])
+
+        self.assertEqual(find_lone_drawn_lines(page), [])
+
+    def test_line_across_the_page_is_not_a_lone_underline(self):
+        page = read_first_page([], drawn=[(40, 600, 560, 600)])
+
+        self.assertEqual(find_lone_drawn_lines(page), [])
 
     def test_name_after_prin_on_the_line_above(self):
         page = read_first_page([

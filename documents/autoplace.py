@@ -24,6 +24,12 @@ EMPTY_SPOT_WIDTH_POINTS = 150
 MIN_EMPTY_SPOT_WIDTH_POINTS = 60
 PAGE_MARGIN_POINTS = 36
 MAX_SPACE_ABOVE_POINTS = 60
+# Lines drawn by Word (underlined spaces, borders) instead of typed with "_"
+THIN_LINE_POINTS = 2
+MIN_DRAWN_LINE_POINTS = 40
+MAX_LONE_LINE_POINTS = 300
+MAX_LABEL_GAP_POINTS = 72
+DRAWN_LINE_BOX_POINTS = 12
 SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
 
 
@@ -104,6 +110,88 @@ def read_signed_areas(page):
     return signed_areas
 
 
+def segment_of(item):
+    # A drawn line, or a rectangle so thin that it looks like a line
+    if item[0] == 'l':
+        start = item[1]
+        end = item[2]
+        x0 = start.x
+        y0 = start.y
+        x1 = end.x
+        y1 = end.y
+    elif item[0] == 're':
+        rect = item[1]
+        x0 = rect.x0
+        y0 = rect.y0
+        x1 = rect.x1
+        y1 = rect.y1
+    else:
+        return None
+
+    # A line can be drawn from right to left, so put the smaller numbers first
+    return {
+        'x0': min(x0, x1),
+        'y0': min(y0, y1),
+        'x1': max(x0, x1),
+        'y1': max(y0, y1),
+    }
+
+
+def add_to_lines(lines, segment):
+    # An underline is often drawn as many short pieces, so join the pieces that touch
+    for line in lines:
+        same_height = abs(line['y0'] - segment['y0']) <= 1
+        touching = segment['x0'] <= line['x1'] + 1 and segment['x1'] >= line['x0'] - 1
+        if same_height and touching:
+            line['x0'] = min(line['x0'], segment['x0'])
+            line['x1'] = max(line['x1'], segment['x1'])
+            return
+    lines.append(segment)
+
+
+def touches_vertical(line, vertical_lines):
+    # A line that meets an up-down line is part of a table or a box
+    for vertical in vertical_lines:
+        if vertical['x0'] < line['x0'] - THIN_LINE_POINTS:
+            continue
+        if vertical['x0'] > line['x1'] + THIN_LINE_POINTS:
+            continue
+        if vertical['y0'] > line['y0'] + THIN_LINE_POINTS:
+            continue
+        if vertical['y1'] < line['y0'] - THIN_LINE_POINTS:
+            continue
+        return True
+    return False
+
+
+def read_drawn_lines(page):
+    horizontal_lines = []
+    vertical_lines = []
+
+    for drawing in page.get_drawings():
+        for item in drawing['items']:
+            segment = segment_of(item)
+            if segment is None:
+                continue
+            if segment['y1'] - segment['y0'] <= THIN_LINE_POINTS:
+                add_to_lines(horizontal_lines, segment)
+            elif segment['x1'] - segment['x0'] <= THIN_LINE_POINTS:
+                vertical_lines.append(segment)
+
+    drawn_lines = []
+    for line in horizontal_lines:
+        if line['x1'] - line['x0'] < MIN_DRAWN_LINE_POINTS:
+            continue
+        if touches_vertical(line, vertical_lines):
+            continue
+        drawn_lines.append({
+            'left': to_page_pixels(line['x0']),
+            'width': to_page_pixels(line['x1'] - line['x0']),
+            'y': to_page_pixels(line['y0']),
+        })
+    return drawn_lines
+
+
 def read_words(pdf_path):
     pages = []
 
@@ -127,6 +215,7 @@ def read_words(pdf_path):
                 'height': to_page_pixels(page.rect.height),
                 'words': words,
                 'signed_areas': read_signed_areas(page),
+                'drawn_lines': read_drawn_lines(page),
             })
 
     return pages
@@ -151,15 +240,17 @@ def join_two_word_labels(line):
     position = 0
     while position < len(line):
         word = line[position]
+        two_words = ''
         if position + 1 < len(line):
             next_word = line[position + 1]
             two_words = clean_word(word['text']) + ' ' + clean_word(next_word['text'])
-            if two_words in TWO_WORD_LABELS:
-                joined.append(join_words(word, next_word))
-                position = position + 2
-                continue
-        joined.append(word)
-        position = position + 1
+
+        if two_words in TWO_WORD_LABELS:
+            joined.append(join_words(word, next_word))
+            position = position + 2
+        else:
+            joined.append(word)
+            position = position + 1
     return joined
 
 
@@ -461,16 +552,47 @@ def name_after_slash(line, position):
     if '/' not in rest:
         return ''
 
-    name_texts = rest.split('/')[1].split()
+    parts = rest.split('/')
+    after_slash = parts[1]
+    name_texts = after_slash.split()
     if looks_like_name(name_texts, 1):
         return clean_name(name_texts)
     return ''
+
+
+def drawn_line_after(page, keyword, right_limit):
+    # "Semnătura:" followed by a line drawn by Word, not typed with "_"
+    keyword_right = keyword['left'] + keyword['width']
+    keyword_middle = keyword['top'] + keyword['height'] / 2
+    keyword_bottom = keyword['top'] + keyword['height']
+    farthest_left = keyword_right + to_page_pixels(MAX_LABEL_GAP_POINTS)
+
+    for drawn in page['drawn_lines']:
+        if drawn['y'] < keyword_middle or drawn['y'] > keyword_bottom + keyword['height'] / 2:
+            continue
+        if drawn['left'] < keyword_right - keyword['height'] / 2:
+            continue
+        if drawn['left'] > farthest_left or drawn['left'] >= right_limit:
+            continue
+
+        width = drawn['width']
+        if drawn['left'] + width > right_limit:
+            width = right_limit - drawn['left']
+        return {
+            'left': drawn['left'],
+            'top': drawn['y'] - keyword['height'],
+            'width': width,
+            'height': keyword['height'],
+        }
+    return None
 
 
 def build_spot(page, line, position, name):
     keyword = line[position]
     underline = find_underline(line, position)
     right_limit = right_limit_of(line, position, page['width'])
+    if underline is None:
+        underline = drawn_line_after(page, keyword, right_limit)
     box = signature_box(keyword, underline, right_limit)
     if is_already_signed(page, keyword, box):
         return None
@@ -618,6 +740,70 @@ def find_lone_underlines(page):
     return spots
 
 
+def is_alone_on_its_row(page, drawn):
+    # Underlined text, or "Data: ____", has words on the same row as the line
+    for word in page['words']:
+        word_bottom = word['top'] + word['height']
+        if word['top'] < drawn['y'] and drawn['y'] < word_bottom + word['height'] / 2:
+            return False
+    return True
+
+
+def is_drawn_writing_space(drawn, drawn_lines):
+    # Several lines one under the other are space to write, not to sign
+    box_height = to_page_pixels(DRAWN_LINE_BOX_POINTS)
+    for other in drawn_lines:
+        distance = abs(other['y'] - drawn['y'])
+        if distance < 1 or distance > box_height * 3:
+            continue
+        if other['left'] >= drawn['left'] + drawn['width']:
+            continue
+        if drawn['left'] >= other['left'] + other['width']:
+            continue
+        return True
+    return False
+
+
+def find_lone_drawn_lines(page):
+    # A drawn line with no label, like a "______" line typed with no label
+    spots = []
+    box_height = to_page_pixels(DRAWN_LINE_BOX_POINTS)
+
+    for drawn in page['drawn_lines']:
+        # A very long line is a separator across the page, not a place to sign
+        if drawn['width'] > to_page_pixels(MAX_LONE_LINE_POINTS):
+            continue
+        if not is_alone_on_its_row(page, drawn):
+            continue
+        if is_drawn_writing_space(drawn, page['drawn_lines']):
+            continue
+
+        underline = {
+            'left': drawn['left'],
+            'top': drawn['y'] - box_height,
+            'width': drawn['width'],
+            'height': box_height,
+        }
+        box = {
+            'left': drawn['left'],
+            'top': drawn['y'] - box_height,
+            'width': drawn['width'],
+            'height': box_height,
+        }
+        if is_already_signed(page, underline, box):
+            continue
+        box['space_above'] = space_above(page, box)
+
+        spots.append({
+            'page_number': page['number'],
+            'keyword': underline,
+            'name': '',
+            'underline': underline,
+            'box': box,
+        })
+    return spots
+
+
 def analyze_document(document):
     pdf_path = pdf_path_of(document)
     if pdf_path is None or not os.path.exists(pdf_path):
@@ -639,6 +825,7 @@ def analyze_document(document):
     lone_underlines = []
     for page in pages:
         lone_underlines.extend(find_lone_underlines(page))
+        lone_underlines.extend(find_lone_drawn_lines(page))
 
     # Only what the editor needs, not every word of every page
     return {'spots': spots, 'lone_underlines': lone_underlines}
