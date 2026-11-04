@@ -126,12 +126,17 @@ STATIC_URL = 'static/'
 import os
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-POPPLER_PATH = r"C:\Users\cated\AppData\Local\Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\poppler-25.07.0\Library\bin"
-LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.com"
+if os.name == 'nt':
+    POPPLER_PATH = r"C:\Users\cated\AppData\Local\Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\poppler-25.07.0\Library\bin"
+    LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.com"
+else:
+    # On macOS/Linux, Poppler and LibreOffice are usually on the PATH
+    POPPLER_PATH = None
+    LIBREOFFICE_PATH = '/usr/bin/soffice'
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024
 MAX_PAGES = 50
 
-SITE_URL = 'http://127.0.0.1:8000'
+SITE_URL = 'http://192.168.18.42:8000'
 GMAIL_ADDRESS = ''
 GMAIL_APP_PASSWORD = ''
 
