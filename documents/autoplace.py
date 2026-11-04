@@ -302,10 +302,14 @@ def lines_above(page, keyword, column_start, column_end):
             lines[key] = []
         lines[key].append(word)
 
-    # Words come from top to bottom, so reversing puts the closest line first
+    # The lowest line is the closest to the label, so it goes first
     above = list(lines.values())
-    above.reverse()
+    above.sort(key=top_of_line, reverse=True)
     return above
+
+
+def top_of_line(words):
+    return words[0]['top']
 
 
 def looks_like_name(texts, min_words):
@@ -378,7 +382,11 @@ def role_in_line(words):
     # A role alone on its line, like "ANGAJATORUL" or "Prestator"
     if len(words) != 1:
         return ''
-    role = clean_word(words[0]['text'])
+    text = words[0]['text']
+    # Another "Semnatura" label or a lowercase word is not a role
+    if is_signature_word(text) or not text[0].isupper():
+        return ''
+    role = clean_word(text)
     if not role.isalpha():
         return ''
     return role.capitalize()
@@ -488,7 +496,10 @@ def find_signature_spots(page):
         if len(name_words) > MAX_NAME_WORDS:
             continue
 
-        name = clean_name(name_words)
+        # "1. Signature" has words before it, but they are not a name
+        name = ''
+        if looks_like_name(name_words, 1):
+            name = clean_name(name_words)
         if name == '':
             name = name_after_slash(line, position)
         if name == '':
@@ -541,7 +552,7 @@ def find_lone_underlines(page, spots):
 def analyze_document(document):
     pdf_path = pdf_path_of(document)
     if pdf_path is None or not os.path.exists(pdf_path):
-        return {'pages': [], 'spots': [], 'lone_underlines': []}
+        return {'spots': [], 'lone_underlines': []}
 
     pages = read_words(pdf_path)
 
@@ -564,4 +575,5 @@ def analyze_document(document):
                 page_spots.append(spot)
         lone_underlines.extend(find_lone_underlines(page, page_spots))
 
-    return {'pages': pages, 'spots': spots, 'lone_underlines': lone_underlines}
+    # Only what the editor needs, not every word of every page
+    return {'spots': spots, 'lone_underlines': lone_underlines}
