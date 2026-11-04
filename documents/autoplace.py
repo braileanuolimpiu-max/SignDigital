@@ -9,7 +9,15 @@ SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura']
 MIN_LINE_UNDERSCORES = 3
 MAX_NAME_WORDS = 3
 LINES_CHECKED_UNDER_LABEL = 4
+LINE_HEIGHTS_CHECKED_ABOVE_LABEL = 6
+NAME_INTRODUCERS = ['prin', 'by', 'name', 'nume', 'numele']
+NAME_ENDINGS = ['–', '-', '—']
+COMPANY_TYPES = ['srl', 's.r.l', 'sa', 's.a', 'sc', 'ii', 'llc', 'ltd', 'inc', 'gmbh']
+COMPANY_INTRODUCERS = ['for', 'pentru']
+QUOTES = '"\'“”„«»'
 EMPTY_SPOT_WIDTH_POINTS = 150
+PAGE_MARGIN_POINTS = 36
+MAX_SPACE_ABOVE_POINTS = 60
 SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
 
 
@@ -122,14 +130,19 @@ def name_before(line, position):
 
 
 def underline_part_of(word):
+    # "Semnatura____" or "____/Ion" are one word, keep only the underscores
     text = word['text']
+    if text.strip('_') == '':
+        return word
+
     first_underscore = text.index('_')
-    skipped_width = word['width'] * first_underscore / len(text)
+    last_underscore = text.rindex('_')
+    letter_width = word['width'] / len(text)
     return {
-        'text': text[first_underscore:],
-        'left': word['left'] + skipped_width,
+        'text': text[first_underscore:last_underscore + 1],
+        'left': word['left'] + letter_width * first_underscore,
         'top': word['top'],
-        'width': word['width'] - skipped_width,
+        'width': letter_width * (last_underscore + 1 - first_underscore),
         'height': word['height'],
         'block': word['block'],
         'line': word['line'],
@@ -143,7 +156,7 @@ def find_underline(line, position):
 
     for other in line[position + 1:]:
         if is_line_placeholder(other['text']):
-            return other
+            return underline_part_of(other)
         if clean_word(other['text']) != '':
             return None
     return None
@@ -162,7 +175,14 @@ def is_followed_by_text(line, position):
     return False
 
 
-def signature_box(keyword, underline):
+def right_limit_of(line, position, page_width):
+    for other in line[position + 1:]:
+        if is_signature_word(other['text']):
+            return other['left'] - other['height'] / 2
+    return page_width - to_page_pixels(PAGE_MARGIN_POINTS)
+
+
+def signature_box(keyword, underline, right_limit):
     if underline is not None:
         return {
             'left': underline['left'],
@@ -172,12 +192,35 @@ def signature_box(keyword, underline):
         }
 
     gap = keyword['height'] / 2
+    left = keyword['left'] + keyword['width'] + gap
+    width = to_page_pixels(EMPTY_SPOT_WIDTH_POINTS)
+    if left + width > right_limit:
+        width = right_limit - left
+
     return {
-        'left': keyword['left'] + keyword['width'] + gap,
+        'left': left,
         'top': keyword['top'],
-        'width': to_page_pixels(EMPTY_SPOT_WIDTH_POINTS),
+        'width': width,
         'height': keyword['height'],
     }
+
+
+def space_above(page, box):
+    # How tall the signature can be: from the line up to the closest text above it
+    line_bottom = box['top'] + box['height']
+    line_middle = box['top'] + box['height'] / 2
+    space = to_page_pixels(MAX_SPACE_ABOVE_POINTS)
+
+    for word in page['words']:
+        word_bottom = word['top'] + word['height']
+        if word_bottom > line_middle:
+            continue
+        if word['left'] + word['width'] <= box['left'] or word['left'] >= box['left'] + box['width']:
+            continue
+        if line_bottom - word_bottom < space:
+            space = line_bottom - word_bottom
+
+    return space
 
 
 def area_under_label(keyword, box):
@@ -198,6 +241,204 @@ def is_already_signed(page, keyword, box):
     return False
 
 
+def column_of(line, position, page_width):
+    keyword = line[position]
+    start = 0
+    end = page_width
+
+    for other in line[:position]:
+        if is_signature_word(other['text']):
+            start = (other['left'] + keyword['left']) / 2
+    for other in line[position + 1:]:
+        if is_signature_word(other['text']):
+            end = (keyword['left'] + other['left']) / 2
+            break
+
+    return start, end
+
+
+def lines_above(page, keyword, column_start, column_end):
+    highest_top = keyword['top'] - keyword['height'] * LINE_HEIGHTS_CHECKED_ABOVE_LABEL
+
+    lines = {}
+    for word in page['words']:
+        if word['top'] >= keyword['top'] or word['top'] < highest_top:
+            continue
+        if word['left'] < column_start or word['left'] >= column_end:
+            continue
+        key = (word['block'], word['line'])
+        if key not in lines:
+            lines[key] = []
+        lines[key].append(word)
+
+    # Words come from top to bottom, so reversing puts the closest line first
+    above = list(lines.values())
+    above.reverse()
+    return above
+
+
+def looks_like_name(texts, min_words):
+    if len(texts) < min_words or len(texts) > MAX_NAME_WORDS:
+        return False
+
+    for text in texts:
+        if clean_word(text) in COMPANY_TYPES or clean_word(text) in COMPANY_INTRODUCERS:
+            return False
+        letters = clean_word(text).replace('-', '')
+        if not letters.isalpha():
+            return False
+        if not text[0].isupper():
+            return False
+    return True
+
+
+def texts_before_dash(words):
+    texts = []
+    for word in words:
+        if word['text'] in NAME_ENDINGS:
+            break
+        texts.append(word['text'])
+    return texts
+
+
+def person_in_line(words):
+    texts = texts_before_dash(words)
+
+    # "SUGAR SOFT SRL prin Rodislav Zaharadji" or "Name: Ana Pop"
+    for index in range(len(texts)):
+        if clean_word(texts[index]) in NAME_INTRODUCERS:
+            after = texts[index + 1:]
+            if looks_like_name(after, 1):
+                return ' '.join(after)
+
+    # A line that is only a name, like "Corasevici Mihail"
+    if looks_like_name(texts, 2):
+        return ' '.join(texts)
+    return ''
+
+
+def company_in_line(words):
+    # 'SRL ” Sugar Software”' becomes "Sugar Software"
+    is_company = False
+    company_words = []
+
+    for text in texts_before_dash(words):
+        if clean_word(text) in NAME_INTRODUCERS:
+            break
+        if clean_word(text) in COMPANY_TYPES:
+            is_company = True
+            continue
+        if clean_word(text) in COMPANY_INTRODUCERS:
+            continue
+
+        text = text.strip(QUOTES)
+        if text == '':
+            continue
+        if not clean_word(text).replace('-', '').isalpha():
+            return ''
+        company_words.append(text)
+
+    if not is_company or len(company_words) == 0:
+        return ''
+    return ' '.join(company_words)
+
+
+def role_in_line(words):
+    # A role alone on its line, like "ANGAJATORUL" or "Prestator"
+    if len(words) != 1:
+        return ''
+    role = clean_word(words[0]['text'])
+    if not role.isalpha():
+        return ''
+    return role.capitalize()
+
+
+def name_above(page, line, position):
+    column_start, column_end = column_of(line, position, page['width'])
+    above = lines_above(page, line[position], column_start, column_end)
+
+    for words in above:
+        name = person_in_line(words)
+        if name != '':
+            return name
+
+    for words in above:
+        name = company_in_line(words)
+        if name != '':
+            return name
+
+    for words in above:
+        name = role_in_line(words)
+        if name != '':
+            return name
+
+    return ''
+
+
+def name_after_slash(line, position):
+    # "Semnatura ________ /Ion Pop/" has the name after the line
+    texts = []
+    for other in line[position + 1:]:
+        if is_signature_word(other['text']):
+            break
+        texts.append(other['text'])
+
+    rest = ' '.join(texts)
+    if '/' not in rest:
+        return ''
+
+    name_texts = rest.split('/')[1].split()
+    if looks_like_name(name_texts, 1):
+        return ' '.join(name_texts)
+    return ''
+
+
+def build_spot(page, line, position, name):
+    keyword = line[position]
+    underline = find_underline(line, position)
+    right_limit = right_limit_of(line, position, page['width'])
+    box = signature_box(keyword, underline, right_limit)
+    if is_already_signed(page, keyword, box):
+        return None
+    box['space_above'] = space_above(page, box)
+
+    return {
+        'page_number': page['number'],
+        'keyword': keyword,
+        'name': name,
+        'underline': underline,
+        'box': box,
+    }
+
+
+def lines_of(page):
+    lines = {}
+    for word in page['words']:
+        key = (word['block'], word['line'])
+        if key not in lines:
+            lines[key] = []
+        lines[key].append(word)
+    return list(lines.values())
+
+
+def name_label_position(line):
+    # "Braileanu Olimpiu:" with nothing after it is a place for that person to sign
+    for position in range(len(line)):
+        text = line[position]['text']
+        if is_signature_word(text):
+            return None
+        if text.endswith(':'):
+            texts = []
+            for word in line[:position + 1]:
+                texts.append(word['text'])
+            if not looks_like_name(texts, 2):
+                return None
+            if is_followed_by_text(line, position):
+                return None
+            return position
+    return None
+
+
 def find_signature_spots(page):
     spots = []
 
@@ -216,18 +457,38 @@ def find_signature_spots(page):
         if len(name_words) > MAX_NAME_WORDS:
             continue
 
-        underline = find_underline(line, position)
-        box = signature_box(word, underline)
-        if is_already_signed(page, word, box):
+        name = ' '.join(name_words)
+        if name == '':
+            name = name_after_slash(line, position)
+        if name == '':
+            name = name_above(page, line, position)
+
+        spot = build_spot(page, line, position, name)
+        if spot is not None:
+            spots.append(spot)
+
+    return spots
+
+
+def find_name_label_spots(page, signer_names):
+    # Only names that already sign somewhere else, so "Invoice No:" is not a spot
+    spots = []
+
+    for line in lines_of(page):
+        position = name_label_position(line)
+        if position is None:
             continue
 
-        spots.append({
-            'page_number': page['number'],
-            'keyword': word,
-            'name': ' '.join(name_words),
-            'underline': underline,
-            'box': box,
-        })
+        texts = []
+        for word in line[:position + 1]:
+            texts.append(word['text'].strip(':'))
+        name = ' '.join(texts)
+        if name not in signer_names:
+            continue
+
+        spot = build_spot(page, line, position, name)
+        if spot is not None:
+            spots.append(spot)
 
     return spots
 
@@ -254,10 +515,22 @@ def analyze_document(document):
     pages = read_words(pdf_path)
 
     spots = []
+    for page in pages:
+        spots.extend(find_signature_spots(page))
+
+    signer_names = []
+    for spot in spots:
+        if spot['name'] != '':
+            signer_names.append(spot['name'])
+    for page in pages:
+        spots.extend(find_name_label_spots(page, signer_names))
+
     lone_underlines = []
     for page in pages:
-        page_spots = find_signature_spots(page)
-        spots.extend(page_spots)
+        page_spots = []
+        for spot in spots:
+            if spot['page_number'] == page['number']:
+                page_spots.append(spot)
         lone_underlines.extend(find_lone_underlines(page, page_spots))
 
     return {'pages': pages, 'spots': spots, 'lone_underlines': lone_underlines}

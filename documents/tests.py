@@ -13,7 +13,7 @@ from django.utils import timezone
 from PIL import Image
 import pymupdf
 
-from .autoplace import find_lone_underlines, find_signature_spots, read_words
+from .autoplace import find_lone_underlines, find_name_label_spots, find_signature_spots, read_words
 from .models import Document, Placeholder, Signer, document_upload_path
 from .signing import draw_signature, from_address, sign_link
 from .views import is_valid_email
@@ -581,6 +581,190 @@ class AutoPlaceTests(SignElectricTestCase):
 
         self.assertEqual(spots, [])
         self.assertEqual(len(find_lone_underlines(page, spots)), 1)
+
+    def test_name_after_prin_on_the_line_above(self):
+        page = read_first_page([
+            (72, 580, 'SC MUSKET SRL prin Marius Mitrofan'),
+            (72, 600, 'Semnatura'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Marius Mitrofan')
+
+    def test_name_alone_on_a_line_above(self):
+        page = read_first_page([
+            (72, 560, 'SALARIATUL'),
+            (72, 580, 'Corasevici Mihail'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Corasevici Mihail')
+
+    def test_name_after_name_label_on_the_line_above(self):
+        page = read_first_page([
+            (72, 580, 'Name: Ana Pop'),
+            (72, 600, 'Signature: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ana Pop')
+
+    def test_job_title_after_a_dash_is_not_part_of_the_name(self):
+        page = read_first_page([
+            (72, 580, 'Valentin Scarevnea - Director'),
+            (72, 600, 'Signature: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Valentin Scarevnea')
+
+    def test_each_column_gets_its_own_name(self):
+        page = read_first_page([
+            (72, 580, 'Ana Pop'),
+            (350, 580, 'Dan Rusu'),
+            (72, 600, 'Semnatura______        Semnatura______'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ana Pop')
+        self.assertEqual(spots[1]['name'], 'Dan Rusu')
+
+    def test_company_is_used_when_there_is_no_person(self):
+        page = read_first_page([
+            (72, 560, 'ANGAJATORUL'),
+            (72, 580, 'SRL "Sugar Software"'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Sugar Software')
+
+    def test_role_is_used_when_there_is_no_person_or_company(self):
+        page = read_first_page([
+            (72, 580, 'BENEFICIAR'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Beneficiar')
+
+    def test_person_wins_over_the_company(self):
+        page = read_first_page([
+            (72, 560, 'SRL Sugar Software'),
+            (72, 580, 'Corasevici Mihail'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Corasevici Mihail')
+
+    def test_lines_with_numbers_are_not_names(self):
+        page = read_first_page([
+            (72, 580, 'Cod fiscal: 1024600086865'),
+            (72, 600, 'Semnatura: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], '')
+
+    def test_name_before_the_keyword_wins_over_the_line_above(self):
+        page = read_first_page([
+            (72, 580, 'Ana Pop'),
+            (72, 600, 'Vadim signature: ________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Vadim')
+
+    def test_space_above_stops_at_the_text_above(self):
+        roomy = read_first_page([(72, 600, 'Signature: ________')])
+        tight = read_first_page([
+            (72, 587, 'Maria Ionescu'),
+            (72, 600, 'Signature: ________'),
+        ])
+
+        roomy_space = find_signature_spots(roomy)[0]['box']['space_above']
+        tight_space = find_signature_spots(tight)[0]['box']['space_above']
+
+        self.assertLess(tight_space, roomy_space / 2)
+
+    def test_empty_spot_stops_before_the_next_label(self):
+        page = read_first_page([(72, 600, 'Semnatura        Semnatura')])
+
+        spots = find_signature_spots(page)
+
+        first_box = spots[0]['box']
+        self.assertLessEqual(first_box['left'] + first_box['width'], spots[1]['keyword']['left'])
+
+    def test_empty_spot_stops_at_the_page_margin(self):
+        page = read_first_page([(480, 600, 'Signature')])
+
+        spots = find_signature_spots(page)
+
+        box = spots[0]['box']
+        self.assertLess(box['left'] + box['width'], page['width'])
+
+    def test_name_after_a_slash_glued_to_the_line(self):
+        page = read_first_page([(72, 600, 'Semnatura: ________/Ion Popescu')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ion Popescu')
+        self.assertEqual(spots[0]['underline']['text'], '________')
+
+    def test_glued_name_is_not_part_of_the_line(self):
+        page = read_first_page([(72, 600, 'Semnatura: ________/Ion Popescu')])
+
+        spots = find_signature_spots(page)
+
+        glued_word = page['words'][1]
+        self.assertLess(spots[0]['box']['width'], glued_word['width'])
+
+    def test_name_between_slashes_after_the_line(self):
+        page = read_first_page([(72, 600, 'Semnatura ________ /Ion Pop/')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ion Pop')
+
+    def test_name_with_colon_of_a_known_signer_is_a_spot(self):
+        page = read_first_page([(72, 600, 'Ion Pop:')])
+
+        spots = find_name_label_spots(page, ['Ion Pop'])
+
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['name'], 'Ion Pop')
+
+    def test_heading_with_colon_is_not_a_spot(self):
+        page = read_first_page([(72, 600, 'Invoice No:')])
+
+        spots = find_name_label_spots(page, ['Ion Pop'])
+
+        self.assertEqual(spots, [])
+
+    def test_autoplace_finds_the_name_label_of_a_signer(self):
+        pdf = make_text_pdf([
+            (72, 600, 'Semnatura: ________/Ion Pop'),
+            (72, 650, 'Ion Pop:'),
+        ])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        spots = response.json()['spots']
+        self.assertEqual(len(spots), 2)
+        self.assertEqual(spots[1]['name'], 'Ion Pop')
 
     def test_autoplace_returns_the_spots_of_the_uploaded_pdf(self):
         pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])
