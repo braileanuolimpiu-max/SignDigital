@@ -5,6 +5,7 @@ import pymupdf
 from .converters import PAGE_DPI
 
 POINTS_PER_INCH = 72
+AUTOPLACE_KINDS = ['pdf', 'word']
 SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura', 'semnatură', 'semnătură', 'подпись']
 TWO_WORD_LABELS = ['signed by', 'sign here', 'semnatura olografa', 'semnătura olografă', 'semnătură olografă']
 # Words of a form field, never part of a name or a role
@@ -24,6 +25,11 @@ MIN_EMPTY_SPOT_WIDTH_POINTS = 60
 PAGE_MARGIN_POINTS = 36
 MAX_SPACE_ABOVE_POINTS = 60
 SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
+
+
+def can_autoplace(document):
+    # Images have no text to read, only PDF and Word files do
+    return document.kind in AUTOPLACE_KINDS
 
 
 def pdf_path_of(document):

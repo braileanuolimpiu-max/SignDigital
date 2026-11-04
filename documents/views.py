@@ -12,7 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .autoplace import analyze_document
+from .autoplace import analyze_document, can_autoplace
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
 from .models import Document, Placeholder, Signer, purge_abandoned_documents
@@ -20,6 +20,7 @@ from .signing import send_invitations, send_signed_copy
 
 EXPIRED_MESSAGE = 'Your document expired. Please upload it again.'
 EMAIL_FAILED_MESSAGE = 'The emails could not be sent. Check the email settings and try again.'
+AUTOPLACE_ONLY_MESSAGE = 'Auto Place works only on PDF and Word files.'
 
 
 class SendError(Exception):
@@ -105,6 +106,7 @@ def signature_workspace(request, uid):
     context = {
         'original_url': document.file.url,
         'mode': document.mode,
+        'can_autoplace': can_autoplace(document),
         'editor_data': editor_data,
     }
     return render(request, 'editor.html', context)
@@ -142,6 +144,8 @@ def autoplace(request):
     document = get_active_document(request)
     if document is None:
         return JsonResponse({'error': EXPIRED_MESSAGE}, status=410)
+    if not can_autoplace(document):
+        return JsonResponse({'error': AUTOPLACE_ONLY_MESSAGE}, status=400)
 
     return JsonResponse(analyze_document(document))
 

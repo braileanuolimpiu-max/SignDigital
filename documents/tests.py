@@ -230,6 +230,22 @@ class EditorTests(SignElectricTestCase):
 
         self.assertContains(response, 'Your document expired')
 
+    def test_pdf_shows_the_auto_place_button(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/')
+
+        self.assertContains(response, 'id="AutoPlaceButton"')
+
+    def test_image_has_no_auto_place_button(self):
+        self.upload(make_png())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/')
+
+        self.assertNotContains(response, 'id="AutoPlaceButton"')
+
     def test_sign_only_by_me_shows_the_sign_button(self):
         self.upload(make_png())
         document = Document.objects.get()
@@ -979,12 +995,13 @@ class AutoPlaceTests(SignElectricTestCase):
         self.assertEqual(spots[0]['name'], 'Vadim')
         self.assertEqual(spots[0]['page_number'], 1)
 
-    def test_autoplace_finds_nothing_in_an_image(self):
+    def test_autoplace_is_refused_for_an_image(self):
         self.upload(make_png())
 
         response = self.client.post('/autoplace/')
 
-        self.assertEqual(response.json()['spots'], [])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Auto Place works only on PDF and Word files.')
 
     def test_autoplace_without_a_document(self):
         response = self.client.post('/autoplace/')
