@@ -348,6 +348,7 @@
         <div class="toolbar-group spacer">
             <span class="group-label">Document</span>
             <div class="group-controls">
+                <button type="button" id="AutoPlaceButton" onclick="AutoPlace()"><span class="label-long">Auto Place</span><span class="label-short">Auto</span></button>
                 <a href="{{ original_url }}" target="_blank">Open original</a>
                 {% if mode == 'multi' %}
                 <button type="button" class="primary" id="FinishButton" onclick="OpenSendDialog()" disabled>Sign &amp; send</button>
@@ -833,6 +834,24 @@
 
         const response = await fetch(dataUrl);
         return await response.blob();
+    }
+
+    async function AutoPlace() {
+        const autoPlaceButton = document.getElementById('AutoPlaceButton');
+        autoPlaceButton.disabled = true;
+
+        try {
+            const response = await fetch('{% url "autoplace" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrfToken },
+            });
+            const result = await response.json();
+            console.log('Auto Place result:', result);
+        } catch (error) {
+            console.log('Auto Place failed:', error);
+        }
+
+        autoPlaceButton.disabled = false;
     }
 
     async function SendForSigning() {

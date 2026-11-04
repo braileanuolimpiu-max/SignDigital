@@ -12,6 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from .autoplace import analyze_document
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
 from .models import Document, Placeholder, Signer, purge_abandoned_documents
@@ -132,6 +133,17 @@ def heartbeat(request):
 
     document.mark_seen()
     return HttpResponse(status=204)
+
+
+def autoplace(request):
+    if request.method != 'POST':
+        return HttpResponse(status=405)
+
+    document = get_active_document(request)
+    if document is None:
+        return JsonResponse({'error': EXPIRED_MESSAGE}, status=410)
+
+    return JsonResponse(analyze_document(document))
 
 
 def read_placeholders(request, document):
