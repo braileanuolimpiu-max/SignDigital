@@ -569,25 +569,31 @@
         });
     }
 
-    function AddText() {
-        setActiveCanvas(mostVisibleCanvas());
-
-        const visible = visiblePartOf(canvas);
+    function middleOfScreenOnPage(pageCanvas) {
+        const visible = visiblePartOf(pageCanvas);
         const middleOnScreen = (visible.top + visible.bottom) / 2;
-        const middleOnPage = (middleOnScreen - visible.pageTop) / canvas.getZoom();
+        return (middleOnScreen - visible.pageTop) / pageCanvas.getZoom();
+    }
 
+    function newSignatureText(pageCanvas, left, top) {
         textCounter = textCounter + 1;
         const text = new fabric.IText('Semnatura ' + textCounter, {
             originX: 'center',
             originY: 'center',
-            left: canvas.pageWidth / 2,
-            top: middleOnPage,
+            left: left,
+            top: top,
             fontFamily: SIGNATURE_FONT,
-            fontSize: toPageUnits(canvas, TEXT_SIZE),
+            fontSize: toPageUnits(pageCanvas, TEXT_SIZE),
             fill: textColorInput.value,
         });
         waitForSignatureFont(text);
+        return text;
+    }
 
+    function AddText() {
+        setActiveCanvas(mostVisibleCanvas());
+
+        const text = newSignatureText(canvas, canvas.pageWidth / 2, middleOfScreenOnPage(canvas));
         canvas.add(text);
         canvas.setActiveObject(text);
         canvas.requestRenderAll();
@@ -678,30 +684,35 @@
     const placeholderError = document.getElementById('PlaceholderError');
     let editedPlaceholder = null;
 
-    function AddPlaceholder() {
-        setActiveCanvas(mostVisibleCanvas());
+    function newPlaceholder(pageCanvas, left, top, signerName) {
+        let label = signerName;
+        if (label === '') {
+            label = 'Signature';
+        }
 
-        const visible = visiblePartOf(canvas);
-        const middleOnScreen = (visible.top + visible.bottom) / 2;
-        const middleOnPage = (middleOnScreen - visible.pageTop) / canvas.getZoom();
-
-        const placeholder = new fabric.FabricText('Signature', {
+        const placeholder = new fabric.FabricText(label, {
             originX: 'center',
             originY: 'center',
-            left: canvas.pageWidth / 2,
-            top: middleOnPage,
+            left: left,
+            top: top,
             fontFamily: SIGNATURE_FONT,
-            fontSize: toPageUnits(canvas, PLACEHOLDER_SIZE),
+            fontSize: toPageUnits(pageCanvas, PLACEHOLDER_SIZE),
             fill: placeholderColorInput.value,
             backgroundColor: 'rgba(253, 230, 138, 0.3)',
             lockRotation: true,
         });
         placeholder.setControlsVisibility({ mt: false, mb: false, ml: false, mr: false, mtr: false });
         placeholder.isPlaceholder = true;
-        placeholder.signerName = '';
+        placeholder.signerName = signerName;
         placeholder.signerEmail = '';
         waitForSignatureFont(placeholder);
+        return placeholder;
+    }
 
+    function AddPlaceholder() {
+        setActiveCanvas(mostVisibleCanvas());
+
+        const placeholder = newPlaceholder(canvas, canvas.pageWidth / 2, middleOfScreenOnPage(canvas), '');
         canvas.add(placeholder);
         canvas.setActiveObject(placeholder);
         canvas.requestRenderAll();
@@ -836,8 +847,46 @@
         return await response.blob();
     }
 
+    const autoPlaceButton = document.getElementById('AutoPlaceButton');
+    const autoPlaceLabel = autoPlaceButton.querySelector('.label-long');
+
+    function removeAutoPlaced() {
+        for (const pageCanvas of pageCanvases) {
+            for (const object of pageCanvas.getObjects()) {
+                if (object.isAutoPlaced) {
+                    pageCanvas.remove(object);
+                }
+            }
+        }
+    }
+
+    function placeSpot(spot) {
+        const pageCanvas = pageCanvases[spot.page_number - 1];
+        const box = spot.box;
+        const left = box.left + box.width / 2;
+        const lineBottom = box.top + box.height;
+
+        let object = null;
+        if (editorData.mode === 'multi') {
+            object = newPlaceholder(pageCanvas, left, lineBottom, spot.name);
+        } else {
+            object = newSignatureText(pageCanvas, left, lineBottom);
+        }
+        object.top = lineBottom - object.getScaledHeight() / 2;
+        object.isAutoPlaced = true;
+
+        pageCanvas.add(object);
+        pageCanvas.requestRenderAll();
+    }
+
+    function showAutoPlaceMessage(message) {
+        autoPlaceLabel.textContent = message;
+        setTimeout(function () {
+            autoPlaceLabel.textContent = 'Auto Place';
+        }, 2500);
+    }
+
     async function AutoPlace() {
-        const autoPlaceButton = document.getElementById('AutoPlaceButton');
         autoPlaceButton.disabled = true;
 
         try {
@@ -846,9 +895,20 @@
                 headers: { 'X-CSRFToken': csrfToken },
             });
             const result = await response.json();
-            console.log('Auto Place result:', result);
+
+            if (!response.ok) {
+                showAutoPlaceMessage('Not available');
+            } else if (result.spots.length === 0) {
+                showAutoPlaceMessage('Nothing found');
+            } else {
+                removeAutoPlaced();
+                for (const spot of result.spots) {
+                    placeSpot(spot);
+                }
+                showAutoPlaceMessage('Placed ' + result.spots.length);
+            }
         } catch (error) {
-            console.log('Auto Place failed:', error);
+            showAutoPlaceMessage('Try again');
         }
 
         autoPlaceButton.disabled = false;
@@ -863,6 +923,12 @@
         if (allPlaceholders().length === 0) {
             sendError.textContent = 'Add at least one placeholder before sending.';
             return;
+        }
+        for (const item of allPlaceholders()) {
+            if (item.placeholder.signerEmail === '') {
+                sendError.textContent = 'Every placeholder needs an email. Double-click a placeholder to edit it.';
+                return;
+            }
         }
 
         sendError.textContent = '';
