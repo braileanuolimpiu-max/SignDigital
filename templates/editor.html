@@ -982,16 +982,25 @@
             });
             const result = await response.json();
 
+            let spots = [];
+            if (response.ok) {
+                spots = result.spots;
+            }
+            if (response.ok && editorData.mode === 'multi') {
+                // Lines with no label get a placeholder with no name, the sender fills it in
+                spots = spots.concat(result.lone_underlines);
+            }
+
             if (!response.ok) {
                 showAutoPlaceMessage('Not available');
-            } else if (result.spots.length === 0) {
+            } else if (spots.length === 0) {
                 showAutoPlaceMessage('Nothing found');
-            } else if (editorData.mode === 'solo' && namesIn(result.spots).length > 1) {
+            } else if (editorData.mode === 'solo' && namesIn(spots).length > 1) {
                 // Solo signing has one signer, so ask which of the names is you
-                foundSpots = result.spots;
-                openNameDialog(namesIn(result.spots));
+                foundSpots = spots;
+                openNameDialog(namesIn(spots));
             } else {
-                placeSpots(result.spots);
+                placeSpots(spots);
             }
         } catch (error) {
             showAutoPlaceMessage('Try again');
