@@ -865,7 +865,6 @@
         return await response.blob();
     }
 
-    // Images have no Auto Place button, so this is only used on PDF and Word files
     const autoPlaceButton = document.getElementById('AutoPlaceButton');
 
     function removeAutoPlaced() {
@@ -990,7 +989,6 @@
                 spots = result.spots;
             }
             if (response.ok && editorData.mode === 'multi') {
-                // Lines with no label get a placeholder with no name, the sender fills it in
                 spots = spots.concat(result.lone_underlines);
             }
 
