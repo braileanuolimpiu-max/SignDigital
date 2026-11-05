@@ -8,7 +8,6 @@ POINTS_PER_INCH = 72
 AUTOPLACE_KINDS = ['pdf', 'word']
 SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura', 'semnatură', 'semnătură', 'подпись']
 TWO_WORD_LABELS = ['signed by', 'sign here', 'semnatura olografa', 'semnătura olografă', 'semnătură olografă']
-# Words of a form field, never part of a name or a role
 FIELD_WORDS = ['data', 'date', 'nr', 'no', 'loc', 'place', 'stampila', 'ștampila', 'stamp']
 MIN_LINE_UNDERSCORES = 3
 MAX_NAME_WORDS = 3
@@ -24,13 +23,11 @@ EMPTY_SPOT_WIDTH_POINTS = 150
 MIN_EMPTY_SPOT_WIDTH_POINTS = 60
 PAGE_MARGIN_POINTS = 36
 MAX_SPACE_ABOVE_POINTS = 60
-# Lines drawn by Word (underlined spaces, borders) instead of typed with "_"
 THIN_LINE_POINTS = 2
 MIN_DRAWN_LINE_POINTS = 40
 MAX_LONE_LINE_POINTS = 300
 MAX_LABEL_GAP_POINTS = 72
 DRAWN_LINE_BOX_POINTS = 12
-# Boxes to sign in: an empty box after a label, or a table cell with room under the label
 FRAME_GAP_POINTS = 3
 FRAME_PADDING_POINTS = 3
 MIN_ROOM_POINTS = 15
@@ -39,7 +36,6 @@ SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
 
 
 def can_autoplace(document):
-    # Images have no text to read, only PDF and Word files do
     return document.kind in AUTOPLACE_KINDS
 
 
@@ -67,7 +63,6 @@ def is_signature_word(text):
 
 
 def clean_name(texts):
-    # "Ion Pop:" or "Ana Rusu," becomes "Ion Pop" and "Ana Rusu"
     name_words = []
     for text in texts:
         text = text.strip(NAME_PUNCTUATION)
@@ -116,7 +111,6 @@ def read_signed_areas(page):
 
 
 def make_segment(x0, y0, x1, y1):
-    # A line can be drawn from right to left, so put the smaller numbers first
     return {
         'x0': min(x0, x1),
         'y0': min(y0, y1),
@@ -126,7 +120,6 @@ def make_segment(x0, y0, x1, y1):
 
 
 def segments_of(item):
-    # A drawn line is one segment, a rectangle is its four sides
     if item[0] == 'l':
         start = item[1]
         end = item[2]
@@ -134,7 +127,6 @@ def segments_of(item):
 
     if item[0] == 're':
         rect = item[1]
-        # A rectangle so thin that it looks like a line
         if rect.width <= THIN_LINE_POINTS or rect.height <= THIN_LINE_POINTS:
             return [make_segment(rect.x0, rect.y0, rect.x1, rect.y1)]
         top = make_segment(rect.x0, rect.y0, rect.x1, rect.y0)
@@ -147,7 +139,6 @@ def segments_of(item):
 
 
 def add_to_lines(lines, segment):
-    # An underline is often drawn as many short pieces, so join the pieces that touch
     for line in lines:
         same_height = abs(line['y0'] - segment['y0']) <= 1
         touching = segment['x0'] <= line['x1'] + 1 and segment['x1'] >= line['x0'] - 1
@@ -159,7 +150,6 @@ def add_to_lines(lines, segment):
 
 
 def touches_vertical(line, vertical_lines):
-    # A line that meets an up-down line is part of a table or a box
     for vertical in vertical_lines:
         if vertical['x0'] < line['x0'] - THIN_LINE_POINTS:
             continue
@@ -189,7 +179,6 @@ def read_lines(page):
 
 
 def drawn_lines_of(lines):
-    # The lines to sign on: long enough, and not the side of a table or a box
     drawn_lines = []
     for line in lines['horizontal']:
         if line['x1'] - line['x0'] < MIN_DRAWN_LINE_POINTS:
@@ -262,7 +251,6 @@ def join_words(first, second):
 
 
 def join_two_word_labels(line):
-    # "Signed by" or "Semnătura olografă" are two words but one label
     joined = []
     position = 0
     while position < len(line):
@@ -372,7 +360,6 @@ def signature_box(keyword, underline, right_limit):
 
 
 def box_under_label(keyword, right_limit):
-    # No room after the label (page edge or the next label), so sign on the line under it
     width = to_page_pixels(EMPTY_SPOT_WIDTH_POINTS)
     if keyword['left'] + width > right_limit:
         width = right_limit - keyword['left']
@@ -453,7 +440,6 @@ def lines_above(page, keyword, column_start, column_end):
             lines[key] = []
         lines[key].append(word)
 
-    # The lowest line is the closest to the label, so it goes first
     above = list(lines.values())
     above.sort(key=top_of_line, reverse=True)
     return above
@@ -536,7 +522,6 @@ def role_in_line(words):
     if len(words) != 1:
         return ''
     text = words[0]['text']
-    # Another "Semnatura" label or a lowercase word is not a role
     if is_signature_word(text) or not text[0].isupper():
         return ''
     role = clean_word(text)
@@ -548,7 +533,6 @@ def role_in_line(words):
 def name_above(page, line, position):
     column_start, column_end = column_of(line, position, page['width'])
 
-    # In a table, the name is in the same cell as the label
     frame = frame_around_word(page, line[position])
     if frame is not None:
         if frame['left'] > column_start:
@@ -597,7 +581,6 @@ def name_after_slash(line, position):
 
 
 def drawn_line_after(page, keyword, right_limit):
-    # "Semnătura:" followed by a line drawn by Word, not typed with "_"
     keyword_right = keyword['left'] + keyword['width']
     keyword_middle = keyword['top'] + keyword['height'] / 2
     keyword_bottom = keyword['top'] + keyword['height']
@@ -660,7 +643,6 @@ def closest_line_below(horizontal_lines, x, y):
 
 
 def frame_around(page, x, y):
-    # The box or table cell around the point (x, y), or None
     left = closest_line_left(page['vertical_lines'], x, y)
     right = closest_line_right(page['vertical_lines'], x, y)
     top = closest_line_above(page['horizontal_lines'], x, y)
@@ -668,7 +650,6 @@ def frame_around(page, x, y):
     if left is None or right is None or top is None or bottom is None:
         return None
 
-    # The four sides must meet, or they are lines from different places
     gap = to_page_pixels(FRAME_GAP_POINTS)
     for side in [left, right]:
         if side['y0'] > top['y0'] + gap or side['y1'] < bottom['y0'] - gap:
@@ -701,7 +682,6 @@ def has_words_inside(page, frame):
 
 
 def box_in_frame(left, right, top, bottom):
-    # The signature stands on the bottom of the room and can be as tall as the room
     padding = to_page_pixels(FRAME_PADDING_POINTS)
     height = to_page_pixels(DRAWN_LINE_BOX_POINTS)
     return {
@@ -714,14 +694,12 @@ def box_in_frame(left, right, top, bottom):
 
 
 def empty_box_next_to(page, keyword, right_limit):
-    # "Signature:" with an empty box after it, or right under it
     keyword_right = keyword['left'] + keyword['width']
     keyword_middle = keyword['top'] + keyword['height'] / 2
     keyword_center = keyword['left'] + keyword['width'] / 2
     keyword_bottom = keyword['top'] + keyword['height']
     gap = to_page_pixels(FRAME_GAP_POINTS)
 
-    # Points just inside the boxes that could belong to the label
     points = []
     for vertical in page['vertical_lines']:
         if vertical['y0'] > keyword_middle or vertical['y1'] < keyword_middle:
@@ -757,7 +735,6 @@ def empty_box_next_to(page, keyword, right_limit):
 
 
 def room_under_label(page, keyword, frame):
-    # A table cell like "Semnătura" with empty room under it
     if frame is None:
         return None
 
@@ -774,7 +751,6 @@ def room_under_label(page, keyword, frame):
     if room_bottom - keyword_bottom < to_page_pixels(MIN_ROOM_POINTS):
         return None
 
-    # Under the label, not in the middle of a wide box
     right = keyword['left'] + to_page_pixels(EMPTY_SPOT_WIDTH_POINTS)
     if right > frame['right']:
         right = frame['right']
@@ -785,7 +761,6 @@ def build_spot(page, line, position, name):
     keyword = line[position]
     right_limit = right_limit_of(line, position, page['width'])
 
-    # Inside a table cell, stay inside the cell
     frame = frame_around_word(page, keyword)
     if frame is not None and frame['right'] < right_limit:
         right_limit = frame['right'] - to_page_pixels(FRAME_PADDING_POINTS)
@@ -862,7 +837,6 @@ def find_signature_spots(page):
             if len(name_words) > MAX_NAME_WORDS:
                 continue
 
-            # "1. Signature" has words before it, but they are not a name
             name = ''
             if looks_like_name(name_words, 1):
                 name = clean_name(name_words)
@@ -909,7 +883,6 @@ def is_underline_only(line):
 
 
 def is_writing_space(line, underline_lines):
-    # Several "______" lines one under the other are space to write, not to sign
     first = line[0]
     last = line[-1]
     for other in underline_lines:
@@ -930,7 +903,6 @@ def is_writing_space(line, underline_lines):
 
 
 def find_lone_underlines(page):
-    # A "______" line with no label, often a place to sign with the name under it
     underline_lines = []
     for line in lines_of(page):
         if is_underline_only(line):
@@ -950,7 +922,6 @@ def find_lone_underlines(page):
 
 
 def is_alone_on_its_row(page, drawn):
-    # Underlined text, or "Data: ____", has words on the same row as the line
     for word in page['words']:
         word_bottom = word['top'] + word['height']
         if word['top'] < drawn['y'] and drawn['y'] < word_bottom + word['height'] / 2:
@@ -959,7 +930,6 @@ def is_alone_on_its_row(page, drawn):
 
 
 def is_drawn_writing_space(drawn, drawn_lines):
-    # Several lines one under the other are space to write, not to sign
     box_height = to_page_pixels(DRAWN_LINE_BOX_POINTS)
     for other in drawn_lines:
         distance = abs(other['y'] - drawn['y'])
@@ -974,12 +944,10 @@ def is_drawn_writing_space(drawn, drawn_lines):
 
 
 def find_lone_drawn_lines(page):
-    # A drawn line with no label, like a "______" line typed with no label
     spots = []
     box_height = to_page_pixels(DRAWN_LINE_BOX_POINTS)
 
     for drawn in page['drawn_lines']:
-        # A very long line is a separator across the page, not a place to sign
         if drawn['width'] > to_page_pixels(MAX_LONE_LINE_POINTS):
             continue
         if not is_alone_on_its_row(page, drawn):
@@ -1036,5 +1004,4 @@ def analyze_document(document):
         lone_underlines.extend(find_lone_underlines(page))
         lone_underlines.extend(find_lone_drawn_lines(page))
 
-    # Only what the editor needs, not every word of every page
     return {'spots': spots, 'lone_underlines': lone_underlines}

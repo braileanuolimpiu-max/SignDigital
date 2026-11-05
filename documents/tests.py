@@ -53,9 +53,6 @@ def make_jpeg():
 
 
 def make_text_pdf(lines, stamp=None, font=None, drawn=None, rects=None):
-    # The default font has no Romanian letters, so pass a font for text like "Semnătură"
-    # "drawn" is a list of lines (x0, y0, x1, y1), like the lines Word draws
-    # "rects" is a list of rectangles (x0, y0, x1, y1), like boxes and table cells
     pdf = pymupdf.open()
     page = pdf.new_page()
     if drawn is not None:
@@ -1088,7 +1085,6 @@ class AutoPlaceTests(SignElectricTestCase):
         self.assertEqual(spots[0]['name'], 'Ana Pop')
 
     def test_closest_line_above_wins_even_if_written_last(self):
-        # The PDF has the lower line first, like some two-column documents
         page = read_first_page([
             (72, 580, 'Ana Pop'),
             (72, 560, 'Dan Rusu'),

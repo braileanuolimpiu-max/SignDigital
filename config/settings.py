@@ -127,7 +127,6 @@ import os
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 if os.name == 'nt':
-    # Where "winget install oschwartz10612.Poppler" puts Poppler for the current user
     POPPLER_PATH = os.path.join(
         os.environ.get('LOCALAPPDATA', ''),
         r"Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\poppler-25.07.0\Library\bin",
