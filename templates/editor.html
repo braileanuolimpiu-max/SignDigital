@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Spațiu de Semnare</title>
     <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <style>
         html, body {
             margin: 0;
@@ -410,7 +409,6 @@
 <script>
     const MAX_PAGE_WIDTH = 800;
     const PAGE_SIDE_GUTTER = 16;
-    const POINTS_PER_INCH = 72;
     const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 
     const SIGNATURE_FONT = 'Mr De Haviland';
@@ -663,35 +661,80 @@
     }
 
 
-    function ExportPDF() {
-        const jsPDF = window.jspdf.jsPDF;
-        let pdf = null;
-
-        for (const pageCanvas of pageCanvases) {
-            pageCanvas.discardActiveObject();
-            pageCanvas.renderAll();
-
-            const width = pageCanvas.pageWidth * POINTS_PER_INCH / editorData.dpi;
-            const height = pageCanvas.pageHeight * POINTS_PER_INCH / editorData.dpi;
-            let orientation = 'portrait';
-            if (width > height) {
-                orientation = 'landscape';
+    async function pageOverlay(pageCanvas) {
+        pageCanvas.discardActiveObject();
+        const pageImage = pageCanvas.backgroundImage;
+        pageCanvas.backgroundImage = null;
+        for (const object of pageCanvas.getObjects()) {
+            if (object.isPlaceholder) {
+                object.visible = false;
             }
-            const image = pageCanvas.toDataURL({
-                format: 'jpeg',
-                quality: 0.92,
-                multiplier: 1 / pageCanvas.getZoom(),
+        }
+        pageCanvas.renderAll();
+
+        const dataUrl = pageCanvas.toDataURL({
+            format: 'png',
+            multiplier: 1 / pageCanvas.getZoom(),
+        });
+
+        pageCanvas.backgroundImage = pageImage;
+        for (const object of pageCanvas.getObjects()) {
+            object.visible = true;
+        }
+        pageCanvas.renderAll();
+
+        const response = await fetch(dataUrl);
+        return await response.blob();
+    }
+
+    async function addOverlays(form) {
+        for (let index = 0; index < pageCanvases.length; index++) {
+            const overlay = await pageOverlay(pageCanvases[index]);
+            form.append('overlay_' + (index + 1), overlay, 'overlay.png');
+        }
+    }
+
+    function downloadFile(file, fileName) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(file);
+        link.download = fileName;
+        link.click();
+        setTimeout(function () {
+            URL.revokeObjectURL(link.href);
+        }, 1000);
+    }
+
+    function showFinishMessage(message) {
+        finishButton.textContent = message;
+        setTimeout(function () {
+            finishButton.textContent = 'Sign';
+        }, 2500);
+    }
+
+    async function ExportPDF() {
+        finishButton.disabled = true;
+
+        try {
+            const form = new FormData();
+            await addOverlays(form);
+
+            const response = await fetch('{% url "export_signed" %}', {
+                method: 'POST',
+                body: form,
+                headers: { 'X-CSRFToken': csrfToken },
             });
 
-            if (pdf === null) {
-                pdf = new jsPDF({ unit: 'pt', format: [width, height], orientation: orientation });
+            if (response.ok) {
+                const pdf = await response.blob();
+                downloadFile(pdf, editorData.filename + '.pdf');
             } else {
-                pdf.addPage([width, height], orientation);
+                showFinishMessage('Try again');
             }
-            pdf.addImage(image, 'JPEG', 0, 0, width, height);
+        } catch (error) {
+            showFinishMessage('Try again');
         }
 
-        pdf.save(editorData.filename + '.pdf');
+        finishButton.disabled = false;
     }
 
 
@@ -1038,6 +1081,7 @@
             const image = await pageImageWithoutPlaceholders(pageCanvases[index]);
             form.append('page_' + (index + 1), image, 'page.jpg');
         }
+        await addOverlays(form);
 
         try {
             const response = await fetch('{% url "send_for_signing" %}', {

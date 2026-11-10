@@ -10,7 +10,7 @@ from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.utils import timezone
-from PIL import Image
+from PIL import Image, ImageDraw
 import pymupdf
 
 from .autoplace import (
@@ -21,8 +21,8 @@ from .autoplace import (
     read_words,
     to_page_pixels,
 )
-from .models import Document, Placeholder, Signer, document_upload_path
-from .signing import draw_signature, from_address, sign_link
+from .models import Document, Page, Placeholder, Signer, document_upload_path
+from .signing import add_overlay, color_of, from_address, sign_link, write_signature
 from .views import is_valid_email
 
 
@@ -50,6 +50,32 @@ def make_jpeg():
     buffer = io.BytesIO()
     image.save(buffer, 'JPEG')
     return SimpleUploadedFile('page.jpg', buffer.getvalue(), content_type='image/jpeg')
+
+
+def make_overlay(width=400, height=300):
+    image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    ImageDraw.Draw(image).rectangle([0, 0, 40, 40], fill='red')
+
+    buffer = io.BytesIO()
+    image.save(buffer, 'PNG')
+    return SimpleUploadedFile('overlay.png', buffer.getvalue(), content_type='image/png')
+
+
+def to_points(pixels):
+    return pixels * 72 / 200
+
+
+def red_area(pdf_page):
+    pixmap = pdf_page.get_pixmap()
+    xs = []
+    ys = []
+    for y in range(0, pixmap.height, 2):
+        for x in range(0, pixmap.width, 2):
+            red, green, blue = pixmap.pixel(x, y)
+            if red > 200 and green < 100 and blue < 100:
+                xs.append(x)
+                ys.append(y)
+    return min(xs), min(ys), max(xs), max(ys)
 
 
 def make_text_pdf(lines, stamp=None, font=None, drawn=None, rects=None):
@@ -113,6 +139,7 @@ class SignElectricTestCase(TestCase):
             'sender_email': 'boss@example.com',
             'placeholders': json.dumps(placeholders),
             'page_1': make_jpeg(),
+            'overlay_1': make_overlay(),
         })
 
 
@@ -360,6 +387,7 @@ class SendForSigningTests(SignElectricTestCase):
             'sender_email': 'not an email',
             'placeholders': placeholders,
             'page_1': make_jpeg(),
+            'overlay_1': make_overlay(),
         })
 
         self.assertEqual(response.status_code, 400)
@@ -391,6 +419,21 @@ class SendForSigningTests(SignElectricTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(result['error'], 'Page 1 is missing.')
 
+    def test_missing_overlay_is_rejected(self):
+        self.upload(make_png(), 'multi')
+        placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
+
+        response = self.client.post('/send/', {
+            'sender_email': 'boss@example.com',
+            'placeholders': placeholders,
+            'page_1': make_jpeg(),
+        })
+
+        result = response.json()
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(result['error'], 'The signatures of page 1 are missing.')
+        self.assertEqual(len(mail.outbox), 0)
+
     def test_sign_only_by_me_document_cannot_be_sent(self):
         self.upload(make_png(), 'solo')
         placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
@@ -399,6 +442,7 @@ class SendForSigningTests(SignElectricTestCase):
             'sender_email': 'boss@example.com',
             'placeholders': placeholders,
             'page_1': make_jpeg(),
+            'overlay_1': make_overlay(),
         })
 
         self.assertEqual(response.status_code, 400)
@@ -470,11 +514,107 @@ class SignDocumentTests(SignElectricTestCase):
 
         self.assertContains(response, 'You already signed')
 
+    def test_signed_pdf_keeps_the_text_and_writes_the_name(self):
+        pdf = make_text_pdf([(72, 100, 'Contract Semnatura')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf), 'multi')
+        page = Document.objects.get().pages.get()
+        self.client.post('/send/', {
+            'sender_email': 'boss@example.com',
+            'placeholders': json.dumps([placeholder('Ana Pop', 'ana@example.com')]),
+            'page_1': make_jpeg(),
+            'overlay_1': make_overlay(page.width, page.height),
+        })
+        ana = Signer.objects.get()
+        mail.outbox = []
+
+        self.client_class().post(f'/sign/{ana.token}/')
+
+        signed = pymupdf.open(stream=mail.outbox[0].attachments[0].content, filetype='pdf')
+        text = signed[0].get_text()
+        self.assertIn('Contract Semnatura', text)
+        self.assertIn('Ana Pop', text)
+        self.assertEqual(len(signed[0].get_images()), 1)
+
     def test_unknown_link_says_no_longer_active(self):
         random_token = uuid.uuid4()
         response = self.client.get(f'/sign/{random_token}/')
 
         self.assertContains(response, 'This link is no longer active')
+
+
+class ExportTests(SignElectricTestCase):
+    def test_export_keeps_the_text_of_the_pdf(self):
+        pdf = make_text_pdf([(72, 100, 'Contract Semnatura')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+        page = Document.objects.get().pages.get()
+
+        response = self.client.post('/export/', {'overlay_1': make_overlay(page.width, page.height)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        signed = pymupdf.open(stream=response.content, filetype='pdf')
+        self.assertIn('Contract Semnatura', signed[0].get_text())
+        self.assertEqual(len(signed[0].get_images()), 1)
+
+    def test_export_puts_the_overlay_on_the_page(self):
+        pdf = make_text_pdf([(72, 100, 'Contract')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+        page = Document.objects.get().pages.get()
+
+        response = self.client.post('/export/', {'overlay_1': make_overlay(page.width, page.height)})
+
+        signed = pymupdf.open(stream=response.content, filetype='pdf')
+        left, top, right, bottom = red_area(signed[0])
+        self.assertLess(left, 5)
+        self.assertLess(top, 5)
+        self.assertAlmostEqual(right, to_points(40), delta=3)
+
+    def test_export_of_every_page(self):
+        self.upload(make_pdf())
+
+        response = self.client.post('/export/', {
+            'overlay_1': make_overlay(),
+            'overlay_2': make_overlay(),
+            'overlay_3': make_overlay(),
+        })
+
+        signed = pymupdf.open(stream=response.content, filetype='pdf')
+        self.assertEqual(signed.page_count, 3)
+
+    def test_export_of_an_image(self):
+        self.upload(make_png())
+        page = Document.objects.get().pages.get()
+
+        response = self.client.post('/export/', {'overlay_1': make_overlay(page.width, page.height)})
+
+        signed = pymupdf.open(stream=response.content, filetype='pdf')
+        self.assertEqual(signed.page_count, 1)
+        self.assertAlmostEqual(signed[0].rect.width, to_points(page.width), delta=1)
+
+    def test_export_without_overlay_is_rejected(self):
+        self.upload(make_pdf())
+
+        response = self.client.post('/export/', {'overlay_1': make_overlay()})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'The signatures of page 2 are missing.')
+
+    def test_export_needs_a_png(self):
+        self.upload(make_png())
+
+        response = self.client.post('/export/', {'overlay_1': make_jpeg()})
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_export_without_document(self):
+        response = self.client.post('/export/', {'overlay_1': make_overlay()})
+
+        self.assertEqual(response.status_code, 410)
+
+    def test_export_only_post_is_allowed(self):
+        response = self.client.get('/export/')
+
+        self.assertEqual(response.status_code, 405)
 
 
 class UnitTests(TestCase):
@@ -534,15 +674,52 @@ class UnitTests(TestCase):
         dan.save()
         self.assertTrue(document.everyone_signed())
 
-    def test_draw_signature_writes_on_the_page(self):
-        page = Image.new('RGB', (400, 200), 'white')
+    def test_color_of(self):
+        self.assertEqual(color_of('#ff0000'), (1, 0, 0))
+
+    def test_write_signature_writes_the_name_as_text(self):
+        pdf = pymupdf.open()
+        pdf_page = pdf.new_page(width=400, height=200)
+        page = Page(width=400, height=200)
         signer = Signer(name='Ana Pop')
-        box = Placeholder(signer=signer, left=50, top=50, width=300, height=100, font_size=60, color='#000000')
+        box = Placeholder(signer=signer, left=50, top=50, width=300, height=100, font_size=40, color='#ff0000')
 
-        draw_signature(page, box)
+        write_signature(pdf_page, box, page)
 
-        darkest_color, brightest_color = page.convert('L').getextrema()
-        self.assertLess(darkest_color, 100)
+        self.assertIn('Ana Pop', pdf_page.get_text())
+        left, top, right, bottom = red_area(pdf_page)
+        self.assertAlmostEqual((left + right) / 2, 200, delta=10)
+        self.assertAlmostEqual((top + bottom) / 2, 100, delta=10)
+
+    def test_write_signature_on_a_rotated_page(self):
+        pdf = pymupdf.open()
+        pdf_page = pdf.new_page(width=200, height=400)
+        pdf_page.set_rotation(90)
+        page = Page(width=400, height=200)
+        signer = Signer(name='Ana Pop')
+        box = Placeholder(signer=signer, left=50, top=50, width=300, height=100, font_size=40, color='#ff0000')
+
+        write_signature(pdf_page, box, page)
+
+        left, top, right, bottom = red_area(pdf_page)
+        self.assertAlmostEqual((left + right) / 2, 200, delta=10)
+        self.assertAlmostEqual((top + bottom) / 2, 100, delta=10)
+
+    def test_overlay_covers_the_shown_page(self):
+        for rotation in [0, 90, 180, 270]:
+            pdf = pymupdf.open()
+            pdf_page = pdf.new_page(width=300, height=400)
+            pdf_page.set_rotation(rotation)
+            shown = pdf_page.rect
+            overlay = make_overlay(int(shown.width), int(shown.height))
+
+            add_overlay(pdf_page, overlay.read())
+
+            left, top, right, bottom = red_area(pdf_page)
+            self.assertLess(left, 5)
+            self.assertLess(top, 5)
+            self.assertAlmostEqual(right, 40, delta=4)
+            self.assertAlmostEqual(bottom, 40, delta=4)
 
 
 class AutoPlaceTests(SignElectricTestCase):

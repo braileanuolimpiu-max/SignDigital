@@ -19,7 +19,8 @@ image, sign it yourself, or send it to other people to sign by email.
 
 - **Backend:** Django 6.1 (Python 3.14)
 - **Canvas / editor:** [Fabric.js 7](https://fabricjs.com/) (loaded from a CDN)
-- **PDF export:** jsPDF (CDN)
+- **Signed PDF:** [PyMuPDF](https://pymupdf.readthedocs.io/) adds the signatures on top of the
+  original PDF, so the text of the document stays real text (selectable and searchable)
 - **PDF → image:** `pdf2image`, backed by [Poppler](https://poppler.freedesktop.org/)
 - **Reading text and lines for Auto Place:** [PyMuPDF](https://pymupdf.readthedocs.io/)
 - **Word → PDF:** [LibreOffice](https://www.libreoffice.org/) in headless mode

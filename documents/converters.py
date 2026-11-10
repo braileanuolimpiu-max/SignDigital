@@ -70,19 +70,24 @@ def pdf_to_pages(pdf_path, pages_dir):
     return image_paths
 
 
+def image_on_white_page(image_path):
+    original = Image.open(image_path)
+    image = ImageOps.exif_transpose(original)
+    image = image.convert('RGBA')
+    image.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+
+    page = Image.new('RGB', image.size, 'white')
+    page.paste(image, mask=image)
+    original.close()
+    return page
+
+
 def image_to_pages(image_path, pages_dir):
     page_path = os.path.join(pages_dir, 'page-1.jpg')
 
     try:
-        original = Image.open(image_path)
-        image = ImageOps.exif_transpose(original)
-        image = image.convert('RGBA')
-        image.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
-
-        page = Image.new('RGB', image.size, 'white')
-        page.paste(image, mask=image)
+        page = image_on_white_page(image_path)
         page.save(page_path, 'JPEG', quality=90)
-        original.close()
     except OSError:
         raise ConversionError('The image is damaged.')
 

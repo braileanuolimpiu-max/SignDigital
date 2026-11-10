@@ -16,7 +16,7 @@ from .autoplace import analyze_document, can_autoplace
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
 from .models import Document, Placeholder, Signer, purge_abandoned_documents
-from .signing import send_invitations, send_signed_copy
+from .signing import build_signed_pdf, save_overlays, send_invitations, send_signed_copy
 
 EXPIRED_MESSAGE = 'Your document expired. Please upload it again.'
 EMAIL_FAILED_MESSAGE = 'The emails could not be sent. Check the email settings and try again.'
@@ -223,6 +223,22 @@ def read_page_images(request, document):
     return page_images
 
 
+def read_overlays(request, document):
+    overlays = {}
+
+    for page in document.pages.all():
+        uploaded = request.FILES.get(f'overlay_{page.number}')
+        if uploaded is None:
+            raise SendError(f'The signatures of page {page.number} are missing.')
+
+        if uploaded.content_type != 'image/png':
+            raise SendError(f'The signatures of page {page.number} are not a PNG image.')
+
+        overlays[page.number] = uploaded.read()
+
+    return overlays
+
+
 def save_page_images(page_images):
     for page in page_images:
         uploaded = page_images[page]
@@ -277,10 +293,12 @@ def send_for_signing(request):
     try:
         placeholders = read_placeholders(request, document)
         page_images = read_page_images(request, document)
+        overlays = read_overlays(request, document)
     except SendError as error:
         return JsonResponse({'error': str(error)}, status=400)
 
     save_page_images(page_images)
+    save_overlays(document, overlays)
 
     try:
         with transaction.atomic():
@@ -299,6 +317,23 @@ def send_for_signing(request):
     else:
         messages.success(request, f'"{document.filename}" was sent to {signer_count} people.')
     return JsonResponse({'redirect': reverse('homepage')})
+
+
+def export_signed(request):
+    if request.method != 'POST':
+        return HttpResponse(status=405)
+
+    document = get_active_document(request)
+    if document is None:
+        return JsonResponse({'error': EXPIRED_MESSAGE}, status=410)
+
+    try:
+        overlays = read_overlays(request, document)
+    except SendError as error:
+        return JsonResponse({'error': str(error)}, status=400)
+
+    pdf = build_signed_pdf(document, overlays)
+    return HttpResponse(pdf, content_type='application/pdf')
 
 
 def show_finished(request, title, message):
