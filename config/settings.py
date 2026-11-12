@@ -133,7 +133,6 @@ if os.name == 'nt':
     )
     LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.com"
 else:
-    # On macOS/Linux, Poppler and LibreOffice are usually on the PATH
     POPPLER_PATH = None
     LIBREOFFICE_PATH = '/usr/bin/soffice'
 MAX_UPLOAD_SIZE = 20 * 1024 * 1024

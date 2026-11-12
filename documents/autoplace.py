@@ -273,7 +273,6 @@ def name_before(line, position):
     name_words = []
     for other in line[:position]:
         if is_signature_word(other['text']) or is_line_placeholder(other['text']):
-            # Everything before belongs to another signer on the same line
             name_words = []
         else:
             name_words.append(other['text'])
@@ -281,7 +280,6 @@ def name_before(line, position):
 
 
 def underline_part_of(word):
-    # "Semnatura____" or "____/Ion" are one word, keep only the underscores
     text = word['text']
     if text.strip('_') == '':
         return word
@@ -375,7 +373,6 @@ def box_under_label(keyword, right_limit):
 
 
 def space_above(page, box):
-    # How tall the signature can be: from the line up to the closest text above it
     line_bottom = box['top'] + box['height']
     line_middle = box['top'] + box['height'] / 2
     space = to_page_pixels(MAX_SPACE_ABOVE_POINTS)
@@ -478,21 +475,18 @@ def texts_before_dash(words):
 def person_in_line(words):
     texts = texts_before_dash(words)
 
-    # "SUGAR SOFT SRL prin Rodislav Zaharadji" or "Name: Ana Pop"
     for index in range(len(texts)):
         if clean_word(texts[index]) in NAME_INTRODUCERS:
             after = texts[index + 1:]
             if looks_like_name(after, 1):
                 return clean_name(after)
 
-    # A line that is only a name, like "Corasevici Mihail"
     if looks_like_name(texts, 2):
         return clean_name(texts)
     return ''
 
 
 def company_in_line(words):
-    # 'SRL ” Sugar Software”' becomes "Sugar Software"
     is_company = False
     company_words = []
 
@@ -518,7 +512,6 @@ def company_in_line(words):
 
 
 def role_in_line(words):
-    # A role alone on its line, like "ANGAJATORUL" or "Prestator"
     if len(words) != 1:
         return ''
     text = words[0]['text']
@@ -561,7 +554,6 @@ def name_above(page, line, position):
 
 
 def name_after_slash(line, position):
-    # "Semnatura ________ /Ion Pop/" has the name after the line
     texts = []
     for other in line[position + 1:]:
         if is_signature_word(other['text']):
@@ -802,7 +794,6 @@ def lines_of(page):
 
 
 def name_label_position(line):
-    # "Braileanu Olimpiu:" with nothing after it is a place for that person to sign
     for position in range(len(line)):
         text = line[position]['text']
         if is_signature_word(text):
@@ -829,7 +820,6 @@ def find_signature_spots(page):
             if not is_signature_word(line[position]['text']):
                 continue
 
-            # "without signature and stamp" or "Signature: 0688..." are not places to sign
             if is_followed_by_text(line, position):
                 continue
 
@@ -853,7 +843,6 @@ def find_signature_spots(page):
 
 
 def find_name_label_spots(page, signer_names):
-    # Only names that already sign somewhere else, so "Invoice No:" is not a spot
     spots = []
 
     for line in lines_of(page):
