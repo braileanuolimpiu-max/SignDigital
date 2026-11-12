@@ -8,7 +8,7 @@ POINTS_PER_INCH = 72
 AUTOPLACE_KINDS = ['pdf', 'word']
 SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura', 'semnatură', 'semnătură', 'подпись']
 TWO_WORD_LABELS = ['signed by', 'sign here', 'semnatura olografa', 'semnătura olografă', 'semnătură olografă']
-FIELD_WORDS = ['data', 'date', 'nr', 'no', 'loc', 'place', 'stampila', 'ștampila', 'stamp']
+FIELD_WORDS = ['data', 'date', 'nr', 'no', 'loc', 'place', 'stampila', 'ștampila', 'stamp', 'address', 'adresa', 'adresă', 'email', 'e-mail', 'telefon', 'phone', 'tel', 'cnp', 'iban']
 MIN_LINE_UNDERSCORES = 3
 MAX_NAME_WORDS = 3
 LINES_CHECKED_UNDER_LABEL = 4
@@ -205,6 +205,42 @@ def in_page_pixels(segments):
     return converted
 
 
+def split_label_from_line(word):
+    text = word['text']
+    if ':' not in text:
+        return [word]
+
+    colon = text.index(':')
+    label_text = text[:colon + 1]
+    line_text = text[colon + 1:]
+    if label_text.strip(':') == '' or '_' in label_text:
+        return [word]
+    if line_text.strip('_') != '' or not is_line_placeholder(line_text):
+        return [word]
+
+    letter_width = word['width'] / len(text)
+    label_width = letter_width * len(label_text)
+    label = {
+        'text': label_text,
+        'left': word['left'],
+        'top': word['top'],
+        'width': label_width,
+        'height': word['height'],
+        'block': word['block'],
+        'line': word['line'],
+    }
+    underline = {
+        'text': line_text,
+        'left': word['left'] + label_width,
+        'top': word['top'],
+        'width': word['width'] - label_width,
+        'height': word['height'],
+        'block': word['block'],
+        'line': word['line'],
+    }
+    return [label, underline]
+
+
 def read_words(pdf_path):
     pages = []
 
@@ -212,7 +248,7 @@ def read_words(pdf_path):
         for page in pdf:
             words = []
             for x0, y0, x1, y1, text, block, line, number in page.get_text('words'):
-                words.append({
+                word = {
                     'text': text,
                     'left': to_page_pixels(x0),
                     'top': to_page_pixels(y0),
@@ -220,7 +256,8 @@ def read_words(pdf_path):
                     'height': to_page_pixels(y1 - y0),
                     'block': block,
                     'line': line,
-                })
+                }
+                words.extend(split_label_from_line(word))
 
             lines = read_lines(page)
             pages.append({
@@ -598,6 +635,21 @@ def drawn_line_after(page, keyword, right_limit):
     return None
 
 
+def underline_below(page, keyword):
+    keyword_bottom = keyword['top'] + keyword['height']
+    lowest_top = keyword_bottom + keyword['height']
+
+    for word in page['words']:
+        if not is_line_placeholder(word['text']):
+            continue
+        if word['top'] < keyword_bottom - keyword['height'] / 2 or word['top'] > lowest_top:
+            continue
+        if abs(word['left'] - keyword['left']) > keyword['height'] * 2:
+            continue
+        return underline_part_of(word)
+    return None
+
+
 def closest_line_left(vertical_lines, x, y):
     closest = None
     for line in vertical_lines:
@@ -760,6 +812,8 @@ def build_spot(page, line, position, name):
     underline = find_underline(line, position)
     if underline is None:
         underline = drawn_line_after(page, keyword, right_limit)
+    if underline is None:
+        underline = underline_below(page, keyword)
 
     box = None
     if underline is None:
@@ -793,16 +847,22 @@ def lines_of(page):
     return list(lines.values())
 
 
+def is_followed_by_underline(line, position):
+    if position + 1 >= len(line):
+        return False
+    return is_line_placeholder(line[position + 1]['text'])
+
+
 def name_label_position(line):
     for position in range(len(line)):
         text = line[position]['text']
-        if is_signature_word(text):
+        if is_signature_word(text) or is_line_placeholder(text):
             return None
-        if text.endswith(':'):
+        if text.endswith(':') or is_followed_by_underline(line, position):
             texts = []
             for word in line[:position + 1]:
                 texts.append(word['text'])
-            if not looks_like_name(texts, 2):
+            if not looks_like_name(texts, 1):
                 return None
             if is_followed_by_text(line, position):
                 return None
@@ -842,7 +902,16 @@ def find_signature_spots(page):
     return spots
 
 
-def find_name_label_spots(page, signer_names):
+def is_in_column_of_a_signature(label, signature_spots):
+    for spot in signature_spots:
+        keyword = spot['keyword']
+        if abs(keyword['left'] - label['left']) > label['height'] * 2:
+            continue
+        return True
+    return False
+
+
+def find_name_label_spots(page, signer_names, signature_spots=[]):
     spots = []
 
     for line in lines_of(page):
@@ -854,7 +923,11 @@ def find_name_label_spots(page, signer_names):
         for word in line[:position + 1]:
             texts.append(word['text'])
         name = clean_name(texts)
-        if name not in signer_names:
+
+        is_known_signer = name in signer_names
+        has_underline = find_underline(line, position) is not None
+        is_label_of_signature = has_underline and is_in_column_of_a_signature(line[0], signature_spots)
+        if not is_known_signer and not is_label_of_signature:
             continue
 
         spot = build_spot(page, line, position, name)
@@ -891,6 +964,12 @@ def is_writing_space(line, underline_lines):
     return False
 
 
+def line_width(line):
+    first = line[0]
+    last = line[-1]
+    return last['left'] + last['width'] - first['left']
+
+
 def find_lone_underlines(page):
     underline_lines = []
     for line in lines_of(page):
@@ -900,6 +979,8 @@ def find_lone_underlines(page):
     spots = []
     for line in underline_lines:
         if is_writing_space(line, underline_lines):
+            continue
+        if line_width(line) > to_page_pixels(MAX_LONE_LINE_POINTS):
             continue
         for position in range(len(line)):
             if not is_line_placeholder(line[position]['text']):
@@ -970,6 +1051,32 @@ def find_lone_drawn_lines(page):
     return spots
 
 
+def is_used_by_a_spot(lone, spots):
+    for spot in spots:
+        if spot['page_number'] != lone['page_number']:
+            continue
+        if boxes_overlap(spot['box'], lone['box']):
+            return True
+    return False
+
+
+def is_between_spots(lone, spots):
+    box = lone['box']
+    nearest = box['height'] * LINES_CHECKED_UNDER_LABEL
+    for spot in spots:
+        if spot['page_number'] != lone['page_number']:
+            continue
+        spot_box = spot['box']
+        if abs(spot_box['top'] - box['top']) > nearest:
+            continue
+        if spot_box['left'] >= box['left'] + box['width']:
+            continue
+        if box['left'] >= spot_box['left'] + spot_box['width']:
+            continue
+        return True
+    return False
+
+
 def analyze_document(document):
     pdf_path = pdf_path_of(document)
     if pdf_path is None or not os.path.exists(pdf_path):
@@ -977,20 +1084,30 @@ def analyze_document(document):
 
     pages = read_words(pdf_path)
 
-    spots = []
+    spots_of_pages = []
     for page in pages:
-        spots.extend(find_signature_spots(page))
+        spots_of_pages.append(find_signature_spots(page))
 
     signer_names = []
-    for spot in spots:
-        if spot['name'] != '':
-            signer_names.append(spot['name'])
-    for page in pages:
-        spots.extend(find_name_label_spots(page, signer_names))
+    for page_spots in spots_of_pages:
+        for spot in page_spots:
+            if spot['name'] != '':
+                signer_names.append(spot['name'])
+
+    spots = []
+    for index in range(len(pages)):
+        spots.extend(spots_of_pages[index])
+    for index in range(len(pages)):
+        spots.extend(find_name_label_spots(pages[index], signer_names, spots_of_pages[index]))
 
     lone_underlines = []
     for page in pages:
-        lone_underlines.extend(find_lone_underlines(page))
-        lone_underlines.extend(find_lone_drawn_lines(page))
+        found = find_lone_underlines(page) + find_lone_drawn_lines(page)
+        for lone in found:
+            if is_used_by_a_spot(lone, spots):
+                continue
+            if is_between_spots(lone, spots):
+                continue
+            lone_underlines.append(lone)
 
     return {'spots': spots, 'lone_underlines': lone_underlines}

@@ -1302,6 +1302,56 @@ class AutoPlaceTests(SignElectricTestCase):
         self.assertEqual(len(spots), 2)
         self.assertEqual(spots[1]['name'], 'Ion Pop')
 
+    def test_autoplace_finds_the_line_under_the_keyword_and_the_name_label_above(self):
+        pdf = make_text_pdf([
+            (72, 200, '_____________________________________________________________'),
+            (72, 600, 'Braileanu: _________'),
+            (72, 615, 'Signature:'),
+            (72, 630, '__________'),
+        ])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        spots = response.json()['spots']
+        self.assertEqual(len(spots), 2)
+        self.assertEqual(spots[0]['name'], '')
+        self.assertGreater(spots[0]['box']['top'], spots[0]['keyword']['top'])
+        self.assertEqual(spots[1]['name'], 'Braileanu')
+        self.assertEqual(response.json()['lone_underlines'], [])
+
+    def test_autoplace_finds_a_name_label_glued_to_its_line(self):
+        pdf = make_text_pdf([
+            (72, 600, 'Braileanu:_________'),
+            (72, 630, 'Signature:'),
+            (72, 645, '__________'),
+        ])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        spots = response.json()['spots']
+        self.assertEqual(len(spots), 2)
+        self.assertEqual(spots[0]['name'], '')
+        self.assertEqual(spots[1]['name'], 'Braileanu')
+        self.assertEqual(spots[1]['underline']['text'], '_________')
+
+    def test_autoplace_signs_a_name_before_a_line_and_skips_the_line_between(self):
+        pdf = make_text_pdf([
+            (72, 600, 'Signature:'),
+            (72, 615, '__________'),
+            (72, 658, '__________'),
+            (72, 700, 'Gabriel ____________'),
+        ])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        spots = response.json()['spots']
+        self.assertEqual(len(spots), 2)
+        self.assertEqual(spots[1]['name'], 'Gabriel')
+        self.assertEqual(response.json()['lone_underlines'], [])
+
     def test_autoplace_returns_the_spots_of_the_uploaded_pdf(self):
         pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
