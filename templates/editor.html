@@ -947,7 +947,12 @@
             object = newSignatureText(pageCanvas, left, lineBottom, spot.name);
         }
         fitInBox(object, box);
-        object.top = lineBottom - object.getScaledHeight() / 2;
+        if (box.next_to_text) {
+            object.left = box.left + object.getScaledWidth() / 2;
+            object.top = box.top + box.height / 2;
+        } else {
+            object.top = lineBottom - object.getScaledHeight() / 2;
+        }
         object.isAutoPlaced = true;
 
         pageCanvas.add(object);

@@ -8,7 +8,7 @@ POINTS_PER_INCH = 72
 AUTOPLACE_KINDS = ['pdf', 'word']
 SIGNATURE_KEYWORDS = ['signature', 'semnatura', 'semnătura', 'semnatură', 'semnătură', 'подпись']
 TWO_WORD_LABELS = ['signed by', 'sign here', 'semnatura olografa', 'semnătura olografă', 'semnătură olografă']
-FIELD_WORDS = ['data', 'date', 'nr', 'no', 'loc', 'place', 'stampila', 'ștampila', 'stamp', 'address', 'adresa', 'adresă', 'email', 'e-mail', 'telefon', 'phone', 'tel', 'cnp', 'iban']
+FIELD_WORDS = ['data', 'date', 'nr', 'no', 'loc', 'place', 'stampila', 'ștampila', 'stamp', 'address', 'adresa', 'adresă', 'email', 'e-mail', 'telefon', 'phone', 'tel', 'cnp', 'iban', 'name', 'nume', 'numele', 'prenume', 'surname']
 MIN_LINE_UNDERSCORES = 3
 MAX_NAME_WORDS = 3
 LINES_CHECKED_UNDER_LABEL = 4
@@ -391,6 +391,7 @@ def signature_box(keyword, underline, right_limit):
         'top': keyword['top'],
         'width': width,
         'height': keyword['height'],
+        'next_to_text': True,
     }
 
 
@@ -911,8 +912,24 @@ def is_in_column_of_a_signature(label, signature_spots):
     return False
 
 
+def is_label_alone(line, position):
+    return position == len(line) - 1 and line[position]['text'].endswith(':')
+
+
+def is_next_to_a_spot(label, spots):
+    for spot in spots:
+        keyword = spot['keyword']
+        if abs(keyword['top'] - label['top']) > label['height'] * LINES_CHECKED_UNDER_LABEL:
+            continue
+        if abs(keyword['left'] - label['left']) > label['height'] * 2:
+            continue
+        return True
+    return False
+
+
 def find_name_label_spots(page, signer_names, signature_spots=[]):
     spots = []
+    labels_alone = []
 
     for line in lines_of(page):
         position = name_label_position(line)
@@ -928,8 +945,17 @@ def find_name_label_spots(page, signer_names, signature_spots=[]):
         has_underline = find_underline(line, position) is not None
         is_label_of_signature = has_underline and is_in_column_of_a_signature(line[0], signature_spots)
         if not is_known_signer and not is_label_of_signature:
+            if is_label_alone(line, position):
+                labels_alone.append([line, position, name])
             continue
 
+        spot = build_spot(page, line, position, name)
+        if spot is not None:
+            spots.append(spot)
+
+    for line, position, name in labels_alone:
+        if not is_next_to_a_spot(line[0], signature_spots + spots):
+            continue
         spot = build_spot(page, line, position, name)
         if spot is not None:
             spots.append(spot)

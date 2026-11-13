@@ -1352,6 +1352,31 @@ class AutoPlaceTests(SignElectricTestCase):
         self.assertEqual(spots[1]['name'], 'Gabriel')
         self.assertEqual(response.json()['lone_underlines'], [])
 
+    def test_autoplace_signs_names_without_a_line_next_to_other_signers(self):
+        pdf = make_text_pdf([
+            (72, 400, 'Termeni:'),
+            (72, 600, 'Signature: ________'),
+            (72, 615, 'Mihalaci:'),
+            (72, 630, 'Daniel:'),
+        ])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        names = []
+        for spot in response.json()['spots']:
+            names.append(spot['name'])
+        self.assertEqual(names, ['', 'Mihalaci', 'Daniel'])
+
+    def test_autoplace_marks_a_signature_next_to_the_word(self):
+        pdf = make_text_pdf([(72, 600, 'Signature:')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf))
+
+        response = self.client.post('/autoplace/')
+
+        box = response.json()['spots'][0]['box']
+        self.assertTrue(box['next_to_text'])
+
     def test_autoplace_returns_the_spots_of_the_uploaded_pdf(self):
         pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
