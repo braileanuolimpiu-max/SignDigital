@@ -12,8 +12,9 @@ image, sign it yourself, or send it to other people to sign by email.
 - **Auto Place** finds where to sign (PDF and Word only) and puts the signature there
 - **Multiple signing**: add placeholders and email each person a link to sign
 - Download the signed document as a PDF
-- **Accounts**: sign up and log in to use the app; people you send a document to sign
-  from the email link without an account
+- **Accounts**: sign up and log in to use the app; a link sent by email confirms the
+  address before the account works. People you send a document to sign from the email
+  link without an account
 - **My documents**: every document you signed or sent, how many people signed so far,
   who is still waiting, and the PDF with the signatures so far to view or download
 - **Reminders**: one button emails everyone who has not signed yet (at most once per hour)
@@ -86,7 +87,9 @@ If you see `no such table: documents_document`, you skipped step 4: run `python 
 
 ## Usage
 
-1. Sign up (or log in), then on the homepage pick a file and click **Sign only by me**.
+1. Sign up and open the confirmation link from the email (without email settings, the link
+   is printed in the terminal). Then click **Sign a new document**, pick a file and click
+   **Sign only by me**.
 2. In the editor, click **Auto Place** to put your signature where the document asks for it,
    or add text and draw your signature yourself.
 3. Click **Sign** to download the signed PDF. It is also saved in **My documents**.

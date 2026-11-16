@@ -1,6 +1,9 @@
 import json
+import re
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core import mail
 from django.test import TestCase
 
 from documents.models import Document
@@ -16,7 +19,7 @@ class SignupTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Create an account')
 
-    def test_signup_creates_the_user_and_logs_in(self):
+    def test_signup_creates_an_account_that_waits_for_the_email(self):
         response = self.client.post('/signup/', {
             'username': 'ion',
             'email': 'Ion@Example.com',
@@ -24,10 +27,16 @@ class SignupTests(TestCase):
             'password2': PASSWORD,
         })
 
-        self.assertRedirects(response, '/')
+        self.assertContains(response, 'Check your email')
         user = User.objects.get()
         self.assertEqual(user.email, 'ion@example.com')
+        self.assertFalse(user.is_active)
         self.assertNotEqual(user.password, PASSWORD)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['ion@example.com'])
+
+        response = self.client.get('/')
+        self.assertRedirects(response, '/login/?next=/')
 
     def test_email_can_be_used_only_once(self):
         User.objects.create_user('ion', 'ion@example.com', PASSWORD)
@@ -51,6 +60,113 @@ class SignupTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(User.objects.count(), 0)
+
+
+def sign_up(client, username='ion', email='ion@example.com'):
+    return client.post('/signup/', {
+        'username': username,
+        'email': email,
+        'password1': PASSWORD,
+        'password2': PASSWORD,
+    })
+
+
+def confirmation_link(email):
+    found = re.search(r'/confirm/[^/]+/[^/]+/', email.body)
+    return found.group(0)
+
+
+class EmailConfirmationTests(TestCase):
+    def test_link_confirms_the_email_and_logs_in(self):
+        sign_up(self.client)
+
+        response = self.client.get(confirmation_link(mail.outbox[0]), follow=True)
+
+        self.assertRedirects(response, '/')
+        self.assertContains(response, 'Your email is confirmed.')
+        self.assertTrue(User.objects.get().is_active)
+
+    def test_link_works_only_once(self):
+        sign_up(self.client)
+        link = confirmation_link(mail.outbox[0])
+        self.client.get(link)
+        self.client.post('/logout/')
+
+        response = self.client.get(link)
+
+        self.assertContains(response, 'This link does not work')
+
+    def test_wrong_link_does_not_work(self):
+        sign_up(self.client)
+
+        response = self.client.get('/confirm/MQ/wrong-token/')
+        self.assertContains(response, 'This link does not work')
+
+        response = self.client.get('/confirm/not-base64!/wrong-token/')
+        self.assertContains(response, 'This link does not work')
+        self.assertFalse(User.objects.get().is_active)
+
+    def test_login_before_confirming_asks_to_confirm(self):
+        sign_up(self.client)
+
+        response = self.client.post('/login/', {'username': 'ion', 'password': PASSWORD})
+
+        self.assertContains(response, 'Please confirm your email first.')
+        response = self.client.get('/')
+        self.assertRedirects(response, '/login/?next=/')
+
+    def test_wrong_password_on_unconfirmed_account_says_nothing_about_it(self):
+        sign_up(self.client)
+
+        response = self.client.post('/login/', {'username': 'ion', 'password': 'wrong'})
+
+        self.assertNotContains(response, 'Please confirm your email first.')
+        self.assertContains(response, 'Please enter a correct username and password.')
+
+    def test_login_page_links_to_resend(self):
+        response = self.client.get('/login/')
+
+        self.assertContains(response, '/resend-confirmation/')
+
+    def test_resend_sends_a_new_link_that_works(self):
+        sign_up(self.client)
+        mail.outbox = []
+
+        response = self.client.post('/resend-confirmation/', {'email': 'ION@example.com'})
+
+        self.assertContains(response, 'Check your email')
+        self.assertEqual(len(mail.outbox), 1)
+        self.client.get(confirmation_link(mail.outbox[0]))
+        self.assertTrue(User.objects.get().is_active)
+
+    def test_resend_to_unknown_email_says_the_same_and_sends_nothing(self):
+        response = self.client.post('/resend-confirmation/', {'email': 'nobody@example.com'})
+
+        self.assertContains(response, 'If an account with this email is waiting for confirmation')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_resend_does_nothing_for_a_confirmed_account(self):
+        User.objects.create_user('ion', 'ion@example.com', PASSWORD)
+
+        self.client.post('/resend-confirmation/', {'email': 'ion@example.com'})
+
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_unconfirmed_account_does_not_block_the_email(self):
+        sign_up(self.client, username='stranger', email='ion@example.com')
+
+        response = sign_up(self.client, username='ion', email='ion@example.com')
+
+        self.assertContains(response, 'Check your email')
+        user = User.objects.get()
+        self.assertEqual(user.username, 'ion')
+
+    def test_failed_email_does_not_keep_the_account(self):
+        with patch('accounts.views.send_confirmation_email', side_effect=OSError):
+            response = sign_up(self.client)
+
+        self.assertContains(response, 'The confirmation email could not be sent.')
         self.assertEqual(User.objects.count(), 0)
 
 

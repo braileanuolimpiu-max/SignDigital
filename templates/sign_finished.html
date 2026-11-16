@@ -35,12 +35,21 @@
             font-size: 14px;
             line-height: 1.5;
         }
+        .link {
+            margin-top: 18px;
+        }
+        .link a {
+            color: #2563eb;
+        }
     </style>
 </head>
 <body>
     <div class="card">
         <h2>{{ title }}</h2>
         <p>{{ message }}</p>
+        {% if link %}
+        <p class="link"><a href="{{ link }}">{{ link_text }}</a></p>
+        {% endif %}
     </div>
 </body>
 </html>

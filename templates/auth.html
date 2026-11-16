@@ -141,6 +141,9 @@
         </form>
 
         <p class="other">{{ other_text }} <a href="{% url other_link %}">{{ other_link_text }}</a></p>
+        {% if show_resend %}
+        <p class="other"><a href="{% url 'resend_confirmation' %}">Did not get the confirmation email?</a></p>
+        {% endif %}
     </div>
 </body>
 </html>
