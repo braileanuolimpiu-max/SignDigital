@@ -12,7 +12,11 @@ image, sign it yourself, or send it to other people to sign by email.
 - **Auto Place** finds where to sign (PDF and Word only) and puts the signature there
 - **Multiple signing**: add placeholders and email each person a link to sign
 - Download the signed document as a PDF
-- Uploaded files are temporary: they are deleted two minutes after you leave the editor,
+- **Accounts**: sign up and log in to use the app; people you send a document to sign
+  from the email link without an account
+- **My documents**: every document you signed or sent, how many people signed so far,
+  who is still waiting, and the PDF with the signatures so far to view or download
+- Uploads you never sign or send are deleted two minutes after you leave the editor,
   or after ten minutes without any sign of life from the page
 
 ## Tech stack
@@ -82,10 +86,10 @@ If you see `no such table: documents_document`, you skipped step 4: run `python 
 
 ## Usage
 
-1. On the homepage, pick a file and click **Sign only by me**.
+1. Sign up (or log in), then on the homepage pick a file and click **Sign only by me**.
 2. In the editor, click **Auto Place** to put your signature where the document asks for it,
    or add text and draw your signature yourself.
-3. Click **Sign** to download the signed PDF.
+3. Click **Sign** to download the signed PDF. It is also saved in **My documents**.
 
 Upload limits (`MAX_UPLOAD_SIZE`, `MAX_PAGES`) are set in `config/settings.py`.
 
@@ -108,9 +112,10 @@ The code is in `documents/autoplace.py`.
 ## Multiple signing and email
 
 Click **Multiple signing** on the homepage, add placeholders (one per place someone signs,
-or use **Auto Place**), then **Sign & send**. Each person gets one email with a link; when they press **Sign**, their
-name is written into all their placeholders and the signed PDF is emailed to the sender and
-everyone who has signed. When everyone has signed, the document is deleted.
+or use **Auto Place**), then **Sign & send**. The sender is the email of your account. Each person gets one email with
+a link; when they press **Sign**, their name is written into all their placeholders and the
+signed PDF is emailed to the sender and everyone who has signed. **My documents** shows how
+many people signed so far and lets you download the PDF at any time.
 
 Without email settings, emails are printed in the terminal. To send real emails with Gmail:
 

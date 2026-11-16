@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ document.filename }}</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: #f4f7f6;
+            color: #374151;
+        }
+        .top-bar {
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 24px;
+            background: #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .top-bar h1 {
+            margin: 0;
+            min-width: 0;
+            font-size: 17px;
+            color: #111827;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .top-bar .right {
+            flex: none;
+            display: flex;
+            gap: 8px;
+        }
+        .button {
+            display: inline-block;
+            font-size: 13px;
+            padding: 8px 14px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            text-decoration: none;
+            text-align: center;
+        }
+        .button:hover {
+            background: #f3f4f6;
+        }
+        .button.primary {
+            background: #2563eb;
+            border-color: #2563eb;
+            color: #fff;
+        }
+        .button.primary:hover {
+            background: #1d4ed8;
+        }
+        .content {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            gap: 20px;
+            padding: 20px 24px;
+        }
+        .side {
+            flex: none;
+            width: 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-height: 0;
+        }
+        .card {
+            padding: 18px 20px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .card h2 {
+            margin: 0 0 12px;
+            font-size: 15px;
+            color: #111827;
+        }
+        .signers-card {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .signers-list {
+            overflow-y: auto;
+        }
+        .status {
+            font-size: 14px;
+            line-height: 1.5;
+            margin: 0;
+        }
+        .progress {
+            height: 8px;
+            margin-top: 12px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            overflow: hidden;
+        }
+        .progress div {
+            height: 100%;
+            background: #16a34a;
+        }
+        .signer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 0;
+            border-top: 1px solid #f3f4f6;
+            font-size: 14px;
+        }
+        .signer .email {
+            font-size: 12px;
+            color: #9ca3af;
+            word-break: break-all;
+        }
+        .signed {
+            flex: none;
+            color: #15803d;
+            font-size: 12px;
+            text-align: right;
+        }
+        .waiting {
+            flex: none;
+            color: #b45309;
+            font-size: 12px;
+        }
+        .viewer-area {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+        }
+        .viewer {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 10px;
+            background: #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .open-pdf {
+            display: none;
+        }
+        @media (max-width: 900px) {
+            body {
+                height: auto;
+                overflow: visible;
+            }
+            .content {
+                flex-direction: column;
+                padding: 16px;
+            }
+            .side {
+                width: auto;
+            }
+            .viewer-area {
+                height: 80vh;
+            }
+        }
+        @media (max-width: 600px) {
+            .top-bar {
+                flex-direction: column;
+                align-items: stretch;
+                padding: 12px 16px;
+            }
+            .top-bar h1 {
+                text-align: center;
+            }
+            .top-bar .right .button {
+                flex: 1;
+            }
+            .content {
+                padding: 12px;
+            }
+            .viewer-area {
+                display: none;
+            }
+            .open-pdf {
+                display: block;
+            }
+            .open-pdf .button {
+                display: block;
+                padding: 12px;
+                font-size: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <h1>{{ document.filename }}</h1>
+        <div class="right">
+            <a class="button" href="{% url 'homepage' %}">Back to my documents</a>
+            <a class="button primary" href="{% url 'document_pdf' document.uid %}?download=1">Download PDF</a>
+        </div>
+    </div>
+
+    <div class="content">
+        <div class="side">
+            <div class="card">
+                {% if document.mode == 'multi' %}
+                <h2>Multiple signing</h2>
+                {% if document.status == 'signed' %}
+                <p class="status">Signed by everyone on {{ document.finished_at|date:"j M Y, H:i" }}.</p>
+                {% else %}
+                <p class="status">{{ signed }} of {{ total }} people signed. Sent on {{ document.sent_at|date:"j M Y, H:i" }}.</p>
+                {% endif %}
+                <div class="progress">
+                    <div style="width: {% widthratio signed total 100 %}%;"></div>
+                </div>
+                {% else %}
+                <h2>Signed by me</h2>
+                <p class="status">Signed on {{ document.finished_at|date:"j M Y, H:i" }}.</p>
+                {% endif %}
+            </div>
+
+            {% if document.mode == 'multi' %}
+            <div class="card signers-card">
+                <h2>Signers</h2>
+                <div class="signers-list">
+                    {% for signer in signers %}
+                    <div class="signer">
+                        <div>
+                            {{ signer.name }}
+                            <div class="email">{{ signer.email }}</div>
+                        </div>
+                        {% if signer.signed_at %}
+                        <span class="signed">Signed<br>{{ signer.signed_at|date:"j M Y, H:i" }}</span>
+                        {% else %}
+                        <span class="waiting">Waiting</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="card open-pdf">
+                <a class="button primary" href="{% url 'document_pdf' document.uid %}" target="_blank">Open the PDF</a>
+            </div>
+        </div>
+
+        <div class="viewer-area">
+            <iframe class="viewer" id="Viewer" title="{{ document.filename }}"></iframe>
+        </div>
+    </div>
+
+    <script>
+        if (window.innerWidth > 600) {
+            document.getElementById('Viewer').src = '{% url "document_pdf" document.uid %}';
+        }
+    </script>
+</body>
+</html>

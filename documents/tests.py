@@ -6,6 +6,7 @@ import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.contrib.auth.models import User
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -126,6 +127,10 @@ def placeholder(name, email):
 
 
 class SignElectricTestCase(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user('boss', 'boss@example.com', 'a-long-password-123')
+        self.client.force_login(self.user)
+
     def tearDown(self):
         for document in Document.objects.all():
             document.delete_with_files()
@@ -136,7 +141,6 @@ class SignElectricTestCase(TestCase):
     def send(self, placeholders):
         self.upload(make_png(), 'multi')
         return self.client.post('/send/', {
-            'sender_email': 'boss@example.com',
             'placeholders': json.dumps(placeholders),
             'page_1': make_jpeg(),
             'overlay_1': make_overlay(),
@@ -201,6 +205,7 @@ class HomepageTests(SignElectricTestCase):
 
 class CleanupTests(SignElectricTestCase):
     def setUp(self):
+        super().setUp()
         self.upload(make_pdf())
         self.document = Document.objects.get()
 
@@ -251,14 +256,14 @@ class EditorTests(SignElectricTestCase):
 
         self.assertEqual(response.status_code, 200)
 
-    def test_stranger_is_sent_to_the_homepage(self):
+    def test_stranger_is_sent_to_the_login_page(self):
         self.upload(make_pdf())
         document = Document.objects.get()
 
         stranger_browser = self.client_class()
         response = stranger_browser.get(f'/editor/{document.uid}/')
 
-        self.assertRedirects(response, '/')
+        self.assertRedirects(response, f'/login/?next=/editor/{document.uid}/', fetch_redirect_response=False)
 
     def test_deleted_document_shows_expired_message(self):
         self.upload(make_pdf())
@@ -379,19 +384,20 @@ class SendForSigningTests(SignElectricTestCase):
         self.assertEqual(document.sender_email, 'boss@example.com')
         self.assertIsNotNone(document.sent_at)
 
-    def test_wrong_sender_email_is_rejected(self):
-        self.upload(make_png(), 'multi')
-        placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
+    def test_account_without_email_cannot_send(self):
+        self.user.email = ''
+        self.user.save()
 
-        response = self.client.post('/send/', {
-            'sender_email': 'not an email',
-            'placeholders': placeholders,
-            'page_1': make_jpeg(),
-            'overlay_1': make_overlay(),
-        })
+        response = self.send([placeholder('Ana', 'ana@example.com')])
 
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Your account has no valid email.')
         self.assertEqual(len(mail.outbox), 0)
+
+    def test_sending_goes_to_the_dashboard(self):
+        response = self.send([placeholder('Ana', 'ana@example.com')])
+
+        self.assertEqual(response.json()['redirect'], '/')
 
     def test_sending_without_placeholders_is_rejected(self):
         response = self.send([])
@@ -411,7 +417,6 @@ class SendForSigningTests(SignElectricTestCase):
         placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
 
         response = self.client.post('/send/', {
-            'sender_email': 'boss@example.com',
             'placeholders': placeholders,
         })
 
@@ -424,7 +429,6 @@ class SendForSigningTests(SignElectricTestCase):
         placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
 
         response = self.client.post('/send/', {
-            'sender_email': 'boss@example.com',
             'placeholders': placeholders,
             'page_1': make_jpeg(),
         })
@@ -439,7 +443,6 @@ class SendForSigningTests(SignElectricTestCase):
         placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
 
         response = self.client.post('/send/', {
-            'sender_email': 'boss@example.com',
             'placeholders': placeholders,
             'page_1': make_jpeg(),
             'overlay_1': make_overlay(),
@@ -483,7 +486,7 @@ class SignDocumentTests(SignElectricTestCase):
         self.assertIn('Still waiting for', email.body)
         self.assertIn('Dan (dan@example.com)', email.body)
 
-    def test_document_is_deleted_when_everyone_signed(self):
+    def test_document_is_kept_and_finished_when_everyone_signed(self):
         self.send([
             placeholder('Ana', 'ana@example.com'),
             placeholder('Dan', 'dan@example.com'),
@@ -495,11 +498,14 @@ class SignDocumentTests(SignElectricTestCase):
         ana_browser.post(f'/sign/{ana.token}/')
         self.assertEqual(Document.objects.count(), 1)
 
-        folder = Document.objects.get().folder_path
+        self.assertIsNone(Document.objects.get().finished_at)
+
         dan_browser = self.client_class()
         dan_browser.post(f'/sign/{dan.token}/')
-        self.assertEqual(Document.objects.count(), 0)
-        self.assertFalse(os.path.exists(folder))
+        document = Document.objects.get()
+        self.assertIsNotNone(document.finished_at)
+        self.assertEqual(document.status, 'signed')
+        self.assertTrue(os.path.exists(document.folder_path))
 
     def test_signing_twice_says_already_signed(self):
         self.send([
@@ -519,7 +525,6 @@ class SignDocumentTests(SignElectricTestCase):
         self.upload(SimpleUploadedFile('contract.pdf', pdf), 'multi')
         page = Document.objects.get().pages.get()
         self.client.post('/send/', {
-            'sender_email': 'boss@example.com',
             'placeholders': json.dumps([placeholder('Ana Pop', 'ana@example.com')]),
             'page_1': make_jpeg(),
             'overlay_1': make_overlay(page.width, page.height),
@@ -615,6 +620,141 @@ class ExportTests(SignElectricTestCase):
         response = self.client.get('/export/')
 
         self.assertEqual(response.status_code, 405)
+
+
+class DashboardTests(SignElectricTestCase):
+    def export_solo(self):
+        self.upload(make_png())
+        self.client.post('/export/', {'overlay_1': make_overlay()})
+        return Document.objects.get()
+
+    def test_dashboard_needs_login(self):
+        self.client.logout()
+
+        response = self.client.get('/')
+
+        self.assertRedirects(response, '/login/?next=/')
+
+    def test_empty_dashboard(self):
+        response = self.client.get('/')
+
+        self.assertContains(response, 'You have no signed or sent documents yet.')
+
+    def test_draft_is_not_shown(self):
+        self.upload(make_png())
+        document = Document.objects.get()
+
+        response = self.client.get('/')
+        self.assertNotContains(response, document.filename)
+
+        response = self.client.get(f'/documents/{document.uid}/')
+        self.assertRedirects(response, '/')
+
+    def test_exported_solo_document_is_kept_and_shown(self):
+        document = self.export_solo()
+
+        self.assertEqual(document.status, 'signed')
+        response = self.client.get('/')
+        self.assertContains(response, 'photo')
+        self.assertContains(response, 'Signed by me')
+
+    def test_new_upload_keeps_the_signed_document(self):
+        self.export_solo()
+
+        self.upload(make_pdf())
+
+        self.assertEqual(Document.objects.count(), 2)
+
+    def test_signed_document_is_not_cleaned_up(self):
+        document = self.export_solo()
+        document.left_at = timezone.now() - timedelta(minutes=30)
+        document.last_seen = timezone.now() - timedelta(minutes=30)
+        document.save()
+
+        self.client.get('/')
+
+        self.assertEqual(Document.objects.count(), 1)
+
+    def test_multiple_signing_shows_how_many_signed(self):
+        self.send([
+            placeholder('Ana', 'ana@example.com'),
+            placeholder('Dan', 'dan@example.com'),
+        ])
+        response = self.client.get('/')
+        self.assertContains(response, '0 of 2 signed')
+
+        ana = Signer.objects.get(email='ana@example.com')
+        self.client_class().post(f'/sign/{ana.token}/')
+
+        response = self.client.get('/')
+        self.assertContains(response, '1 of 2 signed')
+
+        dan = Signer.objects.get(email='dan@example.com')
+        self.client_class().post(f'/sign/{dan.token}/')
+
+        response = self.client.get('/')
+        self.assertContains(response, 'Signed by all 2')
+
+    def test_detail_shows_who_signed(self):
+        self.send([
+            placeholder('Ana', 'ana@example.com'),
+            placeholder('Dan', 'dan@example.com'),
+        ])
+        document = Document.objects.get()
+        ana = Signer.objects.get(email='ana@example.com')
+        self.client_class().post(f'/sign/{ana.token}/')
+
+        response = self.client.get(f'/documents/{document.uid}/')
+
+        self.assertContains(response, '1 of 2 people signed')
+        self.assertContains(response, 'ana@example.com')
+        self.assertContains(response, 'Waiting')
+
+    def test_pdf_has_the_signatures_so_far(self):
+        pdf = make_text_pdf([(72, 100, 'Contract Semnatura')])
+        self.upload(SimpleUploadedFile('contract.pdf', pdf), 'multi')
+        page = Document.objects.get().pages.get()
+        self.client.post('/send/', {
+            'placeholders': json.dumps([
+                placeholder('Ana Pop', 'ana@example.com'),
+                placeholder('Dan Ionescu', 'dan@example.com'),
+            ]),
+            'page_1': make_jpeg(),
+            'overlay_1': make_overlay(page.width, page.height),
+        })
+        document = Document.objects.get()
+        ana = Signer.objects.get(email='ana@example.com')
+        self.client_class().post(f'/sign/{ana.token}/')
+
+        response = self.client.get(f'/documents/{document.uid}/pdf/')
+
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        signed = pymupdf.open(stream=b''.join(response.streaming_content), filetype='pdf')
+        text = signed[0].get_text()
+        self.assertIn('Ana Pop', text)
+        self.assertNotIn('Dan Ionescu', text)
+
+    def test_pdf_can_be_downloaded(self):
+        document = self.export_solo()
+
+        response = self.client.get(f'/documents/{document.uid}/pdf/?download=1')
+
+        self.assertIn('attachment', response['Content-Disposition'])
+        self.assertIn('photo.pdf', response['Content-Disposition'])
+
+    def test_other_user_cannot_see_the_document(self):
+        document = self.export_solo()
+        other = User.objects.create_user('maria', 'maria@example.com', 'a-long-password-123')
+        self.client.force_login(other)
+
+        response = self.client.get('/')
+        self.assertNotContains(response, 'photo')
+
+        response = self.client.get(f'/documents/{document.uid}/')
+        self.assertEqual(response.status_code, 404)
+
+        response = self.client.get(f'/documents/{document.uid}/pdf/')
+        self.assertEqual(response.status_code, 404)
 
 
 class UnitTests(TestCase):

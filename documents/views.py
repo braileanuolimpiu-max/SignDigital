@@ -1,22 +1,31 @@
+import io
 import json
 import os
 import smtplib
 
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.http import HttpResponse, JsonResponse
-from django.shortcuts import redirect, render
+from django.http import FileResponse, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.csrf import csrf_exempt
 
 from .autoplace import analyze_document, can_autoplace
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
 from .models import Document, Placeholder, Signer, purge_abandoned_documents
-from .signing import build_signed_pdf, save_overlays, send_invitations, send_signed_copy
+from .signing import (
+    build_signed_pdf,
+    read_saved_overlays,
+    save_overlays,
+    send_invitations,
+    send_signed_copy,
+)
 
 EXPIRED_MESSAGE = 'Your document expired. Please upload it again.'
 EMAIL_FAILED_MESSAGE = 'The emails could not be sent. Check the email settings and try again.'
@@ -28,15 +37,18 @@ class SendError(Exception):
 
 
 def get_active_document(request):
+    if not request.user.is_authenticated:
+        return None
+
     uid = request.session.get('active_doc_uid')
     if not uid:
         return None
-    return Document.objects.filter(uid=uid).first()
+    return Document.objects.filter(uid=uid, owner=request.user).first()
 
 
 def discard_active_document(request):
     document = get_active_document(request)
-    if document:
+    if document and document.status == 'draft':
         document.delete_with_files()
     request.session.pop('active_doc_uid', None)
 
@@ -49,6 +61,7 @@ def is_valid_email(text):
     return True
 
 
+@login_required
 def homepage(request):
     purge_abandoned_documents()
 
@@ -58,6 +71,7 @@ def homepage(request):
             discard_active_document(request)
 
             document = form.save(commit=False)
+            document.owner = request.user
             uploaded_name = form.cleaned_data['file'].name
             name, extension = os.path.splitext(uploaded_name)
             document.filename = name[:50]
@@ -79,9 +93,25 @@ def homepage(request):
     else:
         form = DocumentForm()
 
-    return render(request, 'homepage.html', {'form': form})
+    rows = []
+    for document in request.user.documents.order_by('-created_at'):
+        if document.status == 'draft':
+            continue
+
+        rows.append({
+            'document': document,
+            'signed': document.signed_count(),
+            'total': document.signer_count(),
+        })
+
+    context = {
+        'form': form,
+        'rows': rows,
+    }
+    return render(request, 'dashboard.html', context)
 
 
+@login_required
 def signature_workspace(request, uid):
     if str(uid) != request.session.get('active_doc_uid'):
         return redirect('homepage')
@@ -284,11 +314,9 @@ def send_for_signing(request):
     if document.mode != 'multi':
         return JsonResponse({'error': 'This document is not for multiple signing.'}, status=400)
 
-    sender_email = request.POST.get('sender_email', '')
-    sender_email = sender_email.strip()
-    sender_email = sender_email.lower()
+    sender_email = request.user.email
     if not is_valid_email(sender_email):
-        return JsonResponse({'error': 'Write a valid email for yourself.'}, status=400)
+        return JsonResponse({'error': 'Your account has no valid email.'}, status=400)
 
     try:
         placeholders = read_placeholders(request, document)
@@ -332,6 +360,11 @@ def export_signed(request):
     except SendError as error:
         return JsonResponse({'error': str(error)}, status=400)
 
+    save_overlays(document, overlays)
+    if document.mode == 'solo':
+        document.finished_at = timezone.now()
+        document.save()
+
     pdf = build_signed_pdf(document, overlays)
     return HttpResponse(pdf, content_type='application/pdf')
 
@@ -370,7 +403,8 @@ def sign_document(request, token):
             return show_finished(request, 'Something went wrong', EMAIL_FAILED_MESSAGE)
 
         if document.everyone_signed():
-            document.delete_with_files()
+            document.finished_at = timezone.now()
+            document.save()
 
         return show_finished(
             request,
@@ -410,3 +444,35 @@ def sign_document(request, token):
         'pages': pages,
     }
     return render(request, 'sign.html', context)
+
+
+@login_required
+def document_detail(request, uid):
+    document = get_object_or_404(Document, uid=uid, owner=request.user)
+    if document.status == 'draft':
+        return redirect('homepage')
+
+    context = {
+        'document': document,
+        'signers': document.signers.order_by('id'),
+        'signed': document.signed_count(),
+        'total': document.signer_count(),
+    }
+    return render(request, 'document_detail.html', context)
+
+
+@login_required
+@xframe_options_sameorigin
+def document_pdf(request, uid):
+    document = get_object_or_404(Document, uid=uid, owner=request.user)
+    if document.status == 'draft':
+        return redirect('homepage')
+
+    pdf = build_signed_pdf(document, read_saved_overlays(document))
+    download = request.GET.get('download') == '1'
+    return FileResponse(
+        io.BytesIO(pdf),
+        content_type='application/pdf',
+        as_attachment=download,
+        filename=document.filename + '.pdf',
+    )

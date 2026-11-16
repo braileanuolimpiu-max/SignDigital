@@ -11,4 +11,6 @@ urlpatterns = [
     path('send/', views.send_for_signing, name='send_for_signing'),
     path('export/', views.export_signed, name='export_signed'),
     path('sign/<uuid:token>/', views.sign_document, name='sign_document'),
+    path('documents/<uuid:uid>/', views.document_detail, name='document_detail'),
+    path('documents/<uuid:uid>/pdf/', views.document_pdf, name='document_pdf'),
 ]

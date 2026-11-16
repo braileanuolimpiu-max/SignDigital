@@ -12,7 +12,6 @@ DOCUMENTS_DIRECTORY = 'documents'
 ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg']
 LEFT_GRACE_PERIOD = timedelta(minutes=2)
 ABANDONED_AFTER = timedelta(minutes=10)
-SIGNING_EXPIRES_AFTER = timedelta(days=30)
 
 
 def document_upload_path(instance, filename):
@@ -23,6 +22,13 @@ def document_upload_path(instance, filename):
 
 class Document(models.Model):
     uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='documents',
+        null=True,
+        blank=True,
+    )
     file = models.FileField(
         upload_to=document_upload_path,
         validators=[FileExtensionValidator(allowed_extensions=ALLOWED_EXTENSIONS)],
@@ -35,6 +41,7 @@ class Document(models.Model):
     mode = models.CharField(max_length=10, default='solo')
     sender_email = models.EmailField(blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.filename
@@ -69,6 +76,20 @@ class Document(models.Model):
     def everyone_signed(self):
         waiting = self.signers.filter(signed_at__isnull=True)
         return not waiting.exists()
+
+    def signer_count(self):
+        return self.signers.count()
+
+    def signed_count(self):
+        return self.signers.filter(signed_at__isnull=False).count()
+
+    @property
+    def status(self):
+        if self.finished_at is not None:
+            return 'signed'
+        if self.sent_at is not None:
+            return 'waiting'
+        return 'draft'
 
 
 class Page(models.Model):
@@ -111,7 +132,7 @@ def delete_if_possible(document):
 
 def purge_abandoned_documents():
     now = timezone.now()
-    still_editing = Document.objects.filter(sent_at__isnull=True)
+    still_editing = Document.objects.filter(sent_at__isnull=True, finished_at__isnull=True)
 
     left_too_long_ago = still_editing.filter(left_at__lt=now - LEFT_GRACE_PERIOD)
     for document in left_too_long_ago:
@@ -119,8 +140,4 @@ def purge_abandoned_documents():
 
     silent_too_long = still_editing.filter(last_seen__lt=now - ABANDONED_AFTER)
     for document in silent_too_long:
-        delete_if_possible(document)
-
-    never_finished = Document.objects.filter(sent_at__lt=now - SIGNING_EXPIRES_AFTER)
-    for document in never_finished:
         delete_if_possible(document)

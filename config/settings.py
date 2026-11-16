@@ -31,6 +31,7 @@ ALLOWED_HOSTS = ['*']
 
 INSTALLED_APPS = [
     'documents.apps.DocumentsConfig',
+    'accounts.apps.AccountsConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -52,6 +53,10 @@ MIDDLEWARE = [
 ROOT_URLCONF = 'config.urls'
 
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'homepage'
+LOGOUT_REDIRECT_URL = 'login'
 
 TEMPLATES = [
     {
