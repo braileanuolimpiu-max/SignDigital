@@ -139,6 +139,41 @@
             color: #b45309;
             font-size: 12px;
         }
+        .remind {
+            margin: 14px 0 0;
+        }
+        .remind button {
+            width: 100%;
+            font: inherit;
+            font-size: 13px;
+            padding: 8px 14px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .remind button:hover {
+            background: #f3f4f6;
+        }
+        .reminded {
+            margin: 8px 0 0;
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        }
+        .message {
+            margin: 0;
+            padding: 9px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            background: #f0fdf4;
+            color: #15803d;
+        }
+        .message.error {
+            background: #fef2f2;
+            color: #b91c1c;
+        }
         .viewer-area {
             flex: 1;
             min-width: 0;
@@ -168,7 +203,42 @@
             .side {
                 width: auto;
             }
-            .viewer-area {
+            .remind {
+            margin: 14px 0 0;
+        }
+        .remind button {
+            width: 100%;
+            font: inherit;
+            font-size: 13px;
+            padding: 8px 14px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .remind button:hover {
+            background: #f3f4f6;
+        }
+        .reminded {
+            margin: 8px 0 0;
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        }
+        .message {
+            margin: 0;
+            padding: 9px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            background: #f0fdf4;
+            color: #15803d;
+        }
+        .message.error {
+            background: #fef2f2;
+            color: #b91c1c;
+        }
+        .viewer-area {
                 height: 80vh;
             }
         }
@@ -187,7 +257,42 @@
             .content {
                 padding: 12px;
             }
-            .viewer-area {
+            .remind {
+            margin: 14px 0 0;
+        }
+        .remind button {
+            width: 100%;
+            font: inherit;
+            font-size: 13px;
+            padding: 8px 14px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .remind button:hover {
+            background: #f3f4f6;
+        }
+        .reminded {
+            margin: 8px 0 0;
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        }
+        .message {
+            margin: 0;
+            padding: 9px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            background: #f0fdf4;
+            color: #15803d;
+        }
+        .message.error {
+            background: #fef2f2;
+            color: #b91c1c;
+        }
+        .viewer-area {
                 display: none;
             }
             .open-pdf {
@@ -212,6 +317,12 @@
 
     <div class="content">
         <div class="side">
+            {% if messages %}
+            {% for message in messages %}
+            <p class="message {{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+            {% endif %}
+
             <div class="card">
                 {% if document.mode == 'multi' %}
                 <h2>Multiple signing</h2>
@@ -223,6 +334,15 @@
                 <div class="progress">
                     <div style="width: {% widthratio signed total 100 %}%;"></div>
                 </div>
+                {% if document.status == 'waiting' %}
+                <form method="post" action="{% url 'send_reminder' document.uid %}" class="remind">
+                    {% csrf_token %}
+                    <button type="submit">Send reminder</button>
+                </form>
+                {% if document.reminded_at %}
+                <p class="reminded">Last reminder: {{ document.reminded_at|date:"j M Y, H:i" }}</p>
+                {% endif %}
+                {% endif %}
                 {% else %}
                 <h2>Signed by me</h2>
                 <p class="status">Signed on {{ document.finished_at|date:"j M Y, H:i" }}.</p>

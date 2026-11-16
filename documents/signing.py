@@ -122,25 +122,38 @@ def sign_link(signer):
     return settings.SITE_URL + reverse('sign_document', args=[signer.token])
 
 
+def send_invitation(document, signer, subject, reminder):
+    context = {
+        'document': document,
+        'signer': signer,
+        'link': sign_link(signer),
+        'placeholder_count': signer.placeholders.count(),
+        'reminder': reminder,
+    }
+    html = render_to_string('emails/invitation.html', context)
+
+    email = EmailMessage(
+        subject=subject,
+        body=html,
+        from_email=from_address(document.sender_email),
+        to=[signer.email],
+        reply_to=[document.sender_email],
+    )
+    email.content_subtype = 'html'
+    email.send()
+
+
 def send_invitations(document):
     for signer in document.signers.all():
-        context = {
-            'document': document,
-            'signer': signer,
-            'link': sign_link(signer),
-            'placeholder_count': signer.placeholders.count(),
-        }
-        html = render_to_string('emails/invitation.html', context)
+        send_invitation(document, signer, f'Please sign "{document.filename}"', False)
 
-        email = EmailMessage(
-            subject=f'Please sign "{document.filename}"',
-            body=html,
-            from_email=from_address(document.sender_email),
-            to=[signer.email],
-            reply_to=[document.sender_email],
-        )
-        email.content_subtype = 'html'
-        email.send()
+
+def send_reminders(document):
+    count = 0
+    for signer in document.signers.filter(signed_at__isnull=True):
+        send_invitation(document, signer, f'Reminder: please sign "{document.filename}"', True)
+        count = count + 1
+    return count
 
 
 def send_signed_copy(document, signer):

@@ -16,8 +16,8 @@ image, sign it yourself, or send it to other people to sign by email.
   from the email link without an account
 - **My documents**: every document you signed or sent, how many people signed so far,
   who is still waiting, and the PDF with the signatures so far to view or download
-- Uploads you never sign or send are deleted two minutes after you leave the editor,
-  or after ten minutes without any sign of life from the page
+- **Reminders**: one button emails everyone who has not signed yet (at most once per hour)
+- Uploads you never sign or send are deleted after 24 hours
 
 ## Tech stack
 
@@ -115,7 +115,8 @@ Click **Multiple signing** on the homepage, add placeholders (one per place some
 or use **Auto Place**), then **Sign & send**. The sender is the email of your account. Each person gets one email with
 a link; when they press **Sign**, their name is written into all their placeholders and the
 signed PDF is emailed to the sender and everyone who has signed. **My documents** shows how
-many people signed so far and lets you download the PDF at any time.
+many people signed so far, lets you download the PDF at any time and send a reminder to the
+people who have not signed yet.
 
 Without email settings, emails are printed in the terminal. To send real emails with Gmail:
 

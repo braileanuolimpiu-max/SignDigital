@@ -135,12 +135,18 @@ class SignElectricTestCase(TestCase):
         for document in Document.objects.all():
             document.delete_with_files()
 
+    def editor_url(self, action):
+        document = Document.objects.last()
+        if document is None:
+            return f'/editor/{uuid.uuid4()}/{action}/'
+        return f'/editor/{document.uid}/{action}/'
+
     def upload(self, file, mode='solo'):
         return self.client.post('/', {'file': file, 'mode': mode})
 
     def send(self, placeholders):
         self.upload(make_png(), 'multi')
-        return self.client.post('/send/', {
+        return self.client.post(self.editor_url('send'), {
             'placeholders': json.dumps(placeholders),
             'page_1': make_jpeg(),
             'overlay_1': make_overlay(),
@@ -195,12 +201,13 @@ class HomepageTests(SignElectricTestCase):
         self.assertContains(response, 'The file is too big')
         self.assertEqual(Document.objects.count(), 0)
 
-    def test_new_upload_deletes_the_old_one(self):
+    def test_two_uploads_can_be_edited_at_the_same_time(self):
         self.upload(make_pdf())
         self.upload(make_png())
 
-        document = Document.objects.get()
-        self.assertEqual(document.filename, 'photo')
+        for document in Document.objects.all():
+            response = self.client.get(f'/editor/{document.uid}/')
+            self.assertEqual(response.status_code, 200)
 
 
 class CleanupTests(SignElectricTestCase):
@@ -209,17 +216,20 @@ class CleanupTests(SignElectricTestCase):
         self.upload(make_pdf())
         self.document = Document.objects.get()
 
-    def test_document_stays_one_minute_after_leaving(self):
-        self.document.left_at = timezone.now() - timedelta(minutes=1)
-        self.document.save()
+    def make_old(self, hours):
+        Document.objects.filter(id=self.document.id).update(
+            created_at=timezone.now() - timedelta(hours=hours),
+        )
+
+    def test_draft_stays_for_a_day(self):
+        self.make_old(23)
 
         self.client.get('/')
 
         self.assertEqual(Document.objects.count(), 1)
 
-    def test_document_is_deleted_three_minutes_after_leaving(self):
-        self.document.left_at = timezone.now() - timedelta(minutes=3)
-        self.document.save()
+    def test_draft_is_deleted_after_a_day(self):
+        self.make_old(25)
 
         self.client.get('/')
 
@@ -227,8 +237,7 @@ class CleanupTests(SignElectricTestCase):
         self.assertFalse(os.path.exists(self.document.folder_path))
 
     def test_locked_folder_is_skipped_and_deleted_later(self):
-        self.document.left_at = timezone.now() - timedelta(minutes=3)
-        self.document.save()
+        self.make_old(25)
 
         with patch('shutil.rmtree', side_effect=PermissionError):
             response = self.client.get('/')
@@ -236,14 +245,6 @@ class CleanupTests(SignElectricTestCase):
         self.assertEqual(Document.objects.count(), 1)
 
         self.client.get('/')
-        self.assertEqual(Document.objects.count(), 0)
-
-    def test_document_is_deleted_after_eleven_silent_minutes(self):
-        self.document.last_seen = timezone.now() - timedelta(minutes=11)
-        self.document.save()
-
-        self.client.get('/')
-
         self.assertEqual(Document.objects.count(), 0)
 
 
@@ -309,47 +310,6 @@ class EditorTests(SignElectricTestCase):
         self.assertContains(response, 'Sign &amp; send')
 
 
-class LeavePageTests(SignElectricTestCase):
-    def test_leaving_marks_the_document_but_keeps_it(self):
-        self.upload(make_pdf())
-
-        response = self.client.post('/track-leave/')
-
-        document = Document.objects.get()
-        self.assertEqual(response.status_code, 204)
-        self.assertIsNotNone(document.left_at)
-
-    def test_only_post_is_allowed(self):
-        response = self.client.get('/track-leave/')
-
-        self.assertEqual(response.status_code, 405)
-
-
-class HeartbeatTests(SignElectricTestCase):
-    def test_heartbeat_clears_the_leave_mark(self):
-        self.upload(make_pdf())
-        self.client.post('/track-leave/')
-
-        response = self.client.post('/heartbeat/')
-
-        document = Document.objects.get()
-        self.assertEqual(response.status_code, 204)
-        self.assertIsNone(document.left_at)
-
-    def test_heartbeat_for_a_deleted_document_says_gone(self):
-        self.upload(make_pdf())
-        Document.objects.get().delete_with_files()
-
-        response = self.client.post('/heartbeat/')
-
-        self.assertEqual(response.status_code, 410)
-
-    def test_only_post_is_allowed(self):
-        response = self.client.get('/heartbeat/')
-
-        self.assertEqual(response.status_code, 405)
-
-
 class SendForSigningTests(SignElectricTestCase):
     def test_one_email_per_person(self):
         self.send([
@@ -394,6 +354,31 @@ class SendForSigningTests(SignElectricTestCase):
         self.assertEqual(response.json()['error'], 'Your account has no valid email.')
         self.assertEqual(len(mail.outbox), 0)
 
+    def test_sent_document_cannot_be_sent_or_changed_again(self):
+        self.send([placeholder('Ana', 'ana@example.com')])
+        mail.outbox = []
+
+        response = self.client.post(self.editor_url('send'), {
+            'placeholders': json.dumps([placeholder('Dan', 'dan@example.com')]),
+            'page_1': make_jpeg(),
+            'overlay_1': make_overlay(),
+        })
+        self.assertEqual(response.status_code, 410)
+
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
+        self.assertEqual(response.status_code, 410)
+
+        self.assertEqual(Signer.objects.count(), 1)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_editor_of_a_sent_document_opens_its_page(self):
+        self.send([placeholder('Ana', 'ana@example.com')])
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/')
+
+        self.assertRedirects(response, f'/documents/{document.uid}/')
+
     def test_sending_goes_to_the_dashboard(self):
         response = self.send([placeholder('Ana', 'ana@example.com')])
 
@@ -416,7 +401,7 @@ class SendForSigningTests(SignElectricTestCase):
         self.upload(make_png(), 'multi')
         placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
 
-        response = self.client.post('/send/', {
+        response = self.client.post(self.editor_url('send'), {
             'placeholders': placeholders,
         })
 
@@ -428,7 +413,7 @@ class SendForSigningTests(SignElectricTestCase):
         self.upload(make_png(), 'multi')
         placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
 
-        response = self.client.post('/send/', {
+        response = self.client.post(self.editor_url('send'), {
             'placeholders': placeholders,
             'page_1': make_jpeg(),
         })
@@ -442,7 +427,7 @@ class SendForSigningTests(SignElectricTestCase):
         self.upload(make_png(), 'solo')
         placeholders = json.dumps([placeholder('Ana', 'ana@example.com')])
 
-        response = self.client.post('/send/', {
+        response = self.client.post(self.editor_url('send'), {
             'placeholders': placeholders,
             'page_1': make_jpeg(),
             'overlay_1': make_overlay(),
@@ -451,7 +436,7 @@ class SendForSigningTests(SignElectricTestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_only_post_is_allowed(self):
-        response = self.client.get('/send/')
+        response = self.client.get(self.editor_url('send'))
 
         self.assertEqual(response.status_code, 405)
 
@@ -524,7 +509,7 @@ class SignDocumentTests(SignElectricTestCase):
         pdf = make_text_pdf([(72, 100, 'Contract Semnatura')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf), 'multi')
         page = Document.objects.get().pages.get()
-        self.client.post('/send/', {
+        self.client.post(self.editor_url('send'), {
             'placeholders': json.dumps([placeholder('Ana Pop', 'ana@example.com')]),
             'page_1': make_jpeg(),
             'overlay_1': make_overlay(page.width, page.height),
@@ -553,7 +538,7 @@ class ExportTests(SignElectricTestCase):
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
         page = Document.objects.get().pages.get()
 
-        response = self.client.post('/export/', {'overlay_1': make_overlay(page.width, page.height)})
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay(page.width, page.height)})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'application/pdf')
@@ -566,7 +551,7 @@ class ExportTests(SignElectricTestCase):
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
         page = Document.objects.get().pages.get()
 
-        response = self.client.post('/export/', {'overlay_1': make_overlay(page.width, page.height)})
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay(page.width, page.height)})
 
         signed = pymupdf.open(stream=response.content, filetype='pdf')
         left, top, right, bottom = red_area(signed[0])
@@ -577,7 +562,7 @@ class ExportTests(SignElectricTestCase):
     def test_export_of_every_page(self):
         self.upload(make_pdf())
 
-        response = self.client.post('/export/', {
+        response = self.client.post(self.editor_url('export'), {
             'overlay_1': make_overlay(),
             'overlay_2': make_overlay(),
             'overlay_3': make_overlay(),
@@ -590,7 +575,7 @@ class ExportTests(SignElectricTestCase):
         self.upload(make_png())
         page = Document.objects.get().pages.get()
 
-        response = self.client.post('/export/', {'overlay_1': make_overlay(page.width, page.height)})
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay(page.width, page.height)})
 
         signed = pymupdf.open(stream=response.content, filetype='pdf')
         self.assertEqual(signed.page_count, 1)
@@ -599,7 +584,7 @@ class ExportTests(SignElectricTestCase):
     def test_export_without_overlay_is_rejected(self):
         self.upload(make_pdf())
 
-        response = self.client.post('/export/', {'overlay_1': make_overlay()})
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()['error'], 'The signatures of page 2 are missing.')
@@ -607,17 +592,17 @@ class ExportTests(SignElectricTestCase):
     def test_export_needs_a_png(self):
         self.upload(make_png())
 
-        response = self.client.post('/export/', {'overlay_1': make_jpeg()})
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_jpeg()})
 
         self.assertEqual(response.status_code, 400)
 
     def test_export_without_document(self):
-        response = self.client.post('/export/', {'overlay_1': make_overlay()})
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
 
         self.assertEqual(response.status_code, 410)
 
     def test_export_only_post_is_allowed(self):
-        response = self.client.get('/export/')
+        response = self.client.get(self.editor_url('export'))
 
         self.assertEqual(response.status_code, 405)
 
@@ -625,7 +610,7 @@ class ExportTests(SignElectricTestCase):
 class DashboardTests(SignElectricTestCase):
     def export_solo(self):
         self.upload(make_png())
-        self.client.post('/export/', {'overlay_1': make_overlay()})
+        self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
         return Document.objects.get()
 
     def test_dashboard_needs_login(self):
@@ -658,18 +643,9 @@ class DashboardTests(SignElectricTestCase):
         self.assertContains(response, 'photo')
         self.assertContains(response, 'Signed by me')
 
-    def test_new_upload_keeps_the_signed_document(self):
-        self.export_solo()
-
-        self.upload(make_pdf())
-
-        self.assertEqual(Document.objects.count(), 2)
-
     def test_signed_document_is_not_cleaned_up(self):
         document = self.export_solo()
-        document.left_at = timezone.now() - timedelta(minutes=30)
-        document.last_seen = timezone.now() - timedelta(minutes=30)
-        document.save()
+        Document.objects.filter(id=document.id).update(created_at=timezone.now() - timedelta(days=3))
 
         self.client.get('/')
 
@@ -714,7 +690,7 @@ class DashboardTests(SignElectricTestCase):
         pdf = make_text_pdf([(72, 100, 'Contract Semnatura')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf), 'multi')
         page = Document.objects.get().pages.get()
-        self.client.post('/send/', {
+        self.client.post(self.editor_url('send'), {
             'placeholders': json.dumps([
                 placeholder('Ana Pop', 'ana@example.com'),
                 placeholder('Dan Ionescu', 'dan@example.com'),
@@ -755,6 +731,91 @@ class DashboardTests(SignElectricTestCase):
 
         response = self.client.get(f'/documents/{document.uid}/pdf/')
         self.assertEqual(response.status_code, 404)
+
+
+class ReminderTests(SignElectricTestCase):
+    def setUp(self):
+        super().setUp()
+        self.send([
+            placeholder('Ana', 'ana@example.com'),
+            placeholder('Dan', 'dan@example.com'),
+        ])
+        self.document = Document.objects.get()
+        ana = Signer.objects.get(email='ana@example.com')
+        self.client_class().post(f'/sign/{ana.token}/')
+        mail.outbox = []
+
+    def remind(self):
+        return self.client.post(f'/documents/{self.document.uid}/remind/', follow=True)
+
+    def test_reminder_goes_only_to_people_who_did_not_sign(self):
+        response = self.remind()
+
+        self.assertContains(response, 'A reminder was sent to 1 person.')
+        self.assertEqual(len(mail.outbox), 1)
+        email = mail.outbox[0]
+        self.assertEqual(email.to, ['dan@example.com'])
+        self.assertIn('Reminder', email.subject)
+        self.assertIn('still waiting for you to sign', email.body)
+        dan = Signer.objects.get(email='dan@example.com')
+        self.assertIn(str(dan.token), email.body)
+
+    def test_detail_shows_the_reminder_button(self):
+        response = self.client.get(f'/documents/{self.document.uid}/')
+
+        self.assertContains(response, 'Send reminder')
+
+    def test_only_one_reminder_per_hour(self):
+        self.remind()
+        mail.outbox = []
+
+        response = self.remind()
+
+        self.assertContains(response, 'You already sent a reminder in the last hour.')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_reminder_can_be_sent_again_after_an_hour(self):
+        self.remind()
+        Document.objects.filter(id=self.document.id).update(
+            reminded_at=timezone.now() - timedelta(minutes=61),
+        )
+        mail.outbox = []
+
+        self.remind()
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_no_reminder_when_everyone_signed(self):
+        dan = Signer.objects.get(email='dan@example.com')
+        self.client_class().post(f'/sign/{dan.token}/')
+        mail.outbox = []
+
+        response = self.remind()
+
+        self.assertContains(response, 'This document is not waiting for anyone to sign.')
+        self.assertNotContains(response, 'Send reminder')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_failed_email_shows_an_error(self):
+        with patch('documents.views.send_reminders', side_effect=OSError):
+            response = self.remind()
+
+        self.assertContains(response, 'The emails could not be sent.')
+        self.assertIsNone(Document.objects.get().reminded_at)
+
+    def test_other_user_cannot_send_a_reminder(self):
+        other = User.objects.create_user('maria', 'maria@example.com', 'a-long-password-123')
+        self.client.force_login(other)
+
+        response = self.client.post(f'/documents/{self.document.uid}/remind/')
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_only_post_is_allowed(self):
+        response = self.client.get(f'/documents/{self.document.uid}/remind/')
+
+        self.assertEqual(response.status_code, 405)
 
 
 class UnitTests(TestCase):
@@ -1416,7 +1477,7 @@ class AutoPlaceTests(SignElectricTestCase):
         pdf = make_text_pdf([(72, 600, '______________')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf), 'multi')
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         self.assertEqual(response.json()['spots'], [])
         self.assertEqual(len(response.json()['lone_underlines']), 1)
@@ -1425,7 +1486,7 @@ class AutoPlaceTests(SignElectricTestCase):
         pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         self.assertNotIn('pages', response.json())
 
@@ -1436,7 +1497,7 @@ class AutoPlaceTests(SignElectricTestCase):
         ])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         spots = response.json()['spots']
         self.assertEqual(len(spots), 2)
@@ -1451,7 +1512,7 @@ class AutoPlaceTests(SignElectricTestCase):
         ])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         spots = response.json()['spots']
         self.assertEqual(len(spots), 2)
@@ -1468,7 +1529,7 @@ class AutoPlaceTests(SignElectricTestCase):
         ])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         spots = response.json()['spots']
         self.assertEqual(len(spots), 2)
@@ -1485,7 +1546,7 @@ class AutoPlaceTests(SignElectricTestCase):
         ])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         spots = response.json()['spots']
         self.assertEqual(len(spots), 2)
@@ -1501,7 +1562,7 @@ class AutoPlaceTests(SignElectricTestCase):
         ])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         names = []
         for spot in response.json()['spots']:
@@ -1512,7 +1573,7 @@ class AutoPlaceTests(SignElectricTestCase):
         pdf = make_text_pdf([(72, 600, 'Signature:')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         box = response.json()['spots'][0]['box']
         self.assertTrue(box['next_to_text'])
@@ -1521,7 +1582,7 @@ class AutoPlaceTests(SignElectricTestCase):
         pdf = make_text_pdf([(72, 600, 'Vadim signature: ________')])
         self.upload(SimpleUploadedFile('contract.pdf', pdf))
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         spots = response.json()['spots']
         self.assertEqual(len(spots), 1)
@@ -1531,12 +1592,12 @@ class AutoPlaceTests(SignElectricTestCase):
     def test_autoplace_is_refused_for_an_image(self):
         self.upload(make_png())
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()['error'], 'Auto Place works only on PDF and Word files.')
 
     def test_autoplace_without_a_document(self):
-        response = self.client.post('/autoplace/')
+        response = self.client.post(self.editor_url('autoplace'))
 
         self.assertEqual(response.status_code, 410)

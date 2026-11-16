@@ -412,7 +412,6 @@
 <script>
     const MAX_PAGE_WIDTH = 800;
     const PAGE_SIDE_GUTTER = 16;
-    const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 
     const SIGNATURE_FONT = 'Mr De Haviland';
     const TEXT_SIZE = 25;
@@ -721,7 +720,7 @@
             const form = new FormData();
             await addOverlays(form);
 
-            const response = await fetch('{% url "export_signed" %}', {
+            const response = await fetch('{% url "export_signed" uid %}', {
                 method: 'POST',
                 body: form,
                 headers: { 'X-CSRFToken': csrfToken },
@@ -1024,7 +1023,7 @@
             await document.fonts.load('1em "' + SIGNATURE_FONT + '"');
             fabric.cache.clearFontCache(SIGNATURE_FONT);
 
-            const response = await fetch('{% url "autoplace" %}', {
+            const response = await fetch('{% url "autoplace" uid %}', {
                 method: 'POST',
                 headers: { 'X-CSRFToken': csrfToken },
             });
@@ -1080,7 +1079,7 @@
         await addOverlays(form);
 
         try {
-            const response = await fetch('{% url "send_for_signing" %}', {
+            const response = await fetch('{% url "send_for_signing" uid %}', {
                 method: 'POST',
                 body: form,
                 headers: { 'X-CSRFToken': csrfToken },
@@ -1127,33 +1126,6 @@
                 fitPageCanvas(pageCanvas);
             }
         }, 150);
-    });
-
-
-    function sendHeartbeat() {
-        fetch('{% url "heartbeat" %}', { method: 'POST' }).then(function (response) {
-            if (response.status === 410) {
-                window.location.href = '{% url "homepage" %}';
-            }
-        }).catch(function () {});
-    }
-
-    setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
-
-    document.addEventListener('visibilitychange', function () {
-        if (document.visibilityState === 'visible') {
-            sendHeartbeat();
-        }
-    });
-
-    window.addEventListener('pageshow', function (event) {
-        if (event.persisted) {
-            sendHeartbeat();
-        }
-    });
-
-    window.addEventListener('pagehide', function () {
-        navigator.sendBeacon('{% url "track_leave" %}');
     });
 
 

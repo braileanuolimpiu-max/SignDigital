@@ -4,7 +4,11 @@
     <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 10px; padding: 28px; text-align: center;">
         <h2 style="margin: 0 0 12px; font-size: 18px; color: #111827;">Hello {{ signer.name }},</h2>
         <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.5;">
+            {% if reminder %}
+            A reminder: {{ document.sender_email }} is still waiting for you to sign <strong>{{ document.filename }}</strong>.
+            {% else %}
             {{ document.sender_email }} asks you to sign <strong>{{ document.filename }}</strong>.
+            {% endif %}
             Your name will be placed in {{ placeholder_count }} place{{ placeholder_count|pluralize }}.
         </p>
         <div style="text-align: center;">

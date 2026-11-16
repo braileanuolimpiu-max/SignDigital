@@ -118,27 +118,29 @@ class DocumentOwnerTests(TestCase):
         document = Document.objects.get()
 
         self.client.force_login(self.maria)
-        session = self.client.session
-        session['active_doc_uid'] = str(document.uid)
-        session.save()
 
         response = self.client.get(f'/editor/{document.uid}/')
         self.assertRedirects(response, '/')
-        response = self.client.post('/export/', {'overlay_1': make_overlay()})
+        response = self.client.post(f'/editor/{document.uid}/export/', {'overlay_1': make_overlay()})
         self.assertEqual(response.status_code, 410)
 
     def test_logged_out_requests_get_nothing(self):
-        response = self.client.post('/export/')
+        self.client.force_login(self.ion)
+        self.client.post('/', {'file': make_png(), 'mode': 'solo'})
+        document = Document.objects.get()
+        self.client.logout()
+
+        response = self.client.post(f'/editor/{document.uid}/export/')
         self.assertEqual(response.status_code, 410)
 
-        response = self.client.post('/autoplace/')
+        response = self.client.post(f'/editor/{document.uid}/autoplace/')
         self.assertEqual(response.status_code, 410)
 
     def test_sign_link_works_without_an_account(self):
         self.client.force_login(self.ion)
         self.client.post('/', {'file': make_png(), 'mode': 'multi'})
-        self.client.post('/send/', {
-            'sender_email': 'ion@example.com',
+        document = Document.objects.get()
+        self.client.post(f'/editor/{document.uid}/send/', {
             'placeholders': json.dumps([placeholder('Ana', 'ana@example.com')]),
             'page_1': make_jpeg(),
             'overlay_1': make_overlay(),

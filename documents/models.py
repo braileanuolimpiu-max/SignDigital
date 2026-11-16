@@ -10,8 +10,7 @@ from django.utils import timezone
 
 DOCUMENTS_DIRECTORY = 'documents'
 ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg']
-LEFT_GRACE_PERIOD = timedelta(minutes=2)
-ABANDONED_AFTER = timedelta(minutes=10)
+DRAFTS_KEPT_FOR = timedelta(hours=24)
 
 
 def document_upload_path(instance, filename):
@@ -36,12 +35,11 @@ class Document(models.Model):
     )
     filename = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)
-    last_seen = models.DateTimeField(default=timezone.now)
-    left_at = models.DateTimeField(null=True, blank=True)
     mode = models.CharField(max_length=10, default='solo')
     sender_email = models.EmailField(blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+    reminded_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.filename
@@ -58,15 +56,6 @@ class Document(models.Model):
     @property
     def folder_path(self):
         return os.path.join(settings.MEDIA_ROOT, DOCUMENTS_DIRECTORY, str(self.uid))
-
-    def mark_seen(self):
-        self.last_seen = timezone.now()
-        self.left_at = None
-        self.save(update_fields=['last_seen', 'left_at'])
-
-    def mark_left(self):
-        self.left_at = timezone.now()
-        self.save(update_fields=['left_at'])
 
     def delete_with_files(self):
         if os.path.isdir(self.folder_path):
@@ -130,14 +119,12 @@ def delete_if_possible(document):
         pass
 
 
-def purge_abandoned_documents():
-    now = timezone.now()
-    still_editing = Document.objects.filter(sent_at__isnull=True, finished_at__isnull=True)
-
-    left_too_long_ago = still_editing.filter(left_at__lt=now - LEFT_GRACE_PERIOD)
-    for document in left_too_long_ago:
-        delete_if_possible(document)
-
-    silent_too_long = still_editing.filter(last_seen__lt=now - ABANDONED_AFTER)
-    for document in silent_too_long:
+def delete_old_drafts():
+    too_old = timezone.now() - DRAFTS_KEPT_FOR
+    old_drafts = Document.objects.filter(
+        sent_at__isnull=True,
+        finished_at__isnull=True,
+        created_at__lt=too_old,
+    )
+    for document in old_drafts:
         delete_if_possible(document)

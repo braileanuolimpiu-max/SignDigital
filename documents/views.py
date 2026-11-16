@@ -2,6 +2,7 @@ import io
 import json
 import os
 import smtplib
+from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -13,44 +14,35 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
-from django.views.decorators.csrf import csrf_exempt
 
 from .autoplace import analyze_document, can_autoplace
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
-from .models import Document, Placeholder, Signer, purge_abandoned_documents
+from .models import Document, Placeholder, Signer, delete_old_drafts
 from .signing import (
     build_signed_pdf,
     read_saved_overlays,
     save_overlays,
     send_invitations,
+    send_reminders,
     send_signed_copy,
 )
 
 EXPIRED_MESSAGE = 'Your document expired. Please upload it again.'
 EMAIL_FAILED_MESSAGE = 'The emails could not be sent. Check the email settings and try again.'
 AUTOPLACE_ONLY_MESSAGE = 'Auto Place works only on PDF and Word files.'
+REMIND_AGAIN_AFTER = timedelta(hours=1)
 
 
 class SendError(Exception):
     pass
 
 
-def get_active_document(request):
+def get_editable_document(request, uid):
     if not request.user.is_authenticated:
         return None
 
-    uid = request.session.get('active_doc_uid')
-    if not uid:
-        return None
-    return Document.objects.filter(uid=uid, owner=request.user).first()
-
-
-def discard_active_document(request):
-    document = get_active_document(request)
-    if document and document.status == 'draft':
-        document.delete_with_files()
-    request.session.pop('active_doc_uid', None)
+    return Document.objects.filter(uid=uid, owner=request.user, sent_at__isnull=True).first()
 
 
 def is_valid_email(text):
@@ -63,13 +55,11 @@ def is_valid_email(text):
 
 @login_required
 def homepage(request):
-    purge_abandoned_documents()
+    delete_old_drafts()
 
     if request.method == 'POST':
         form = DocumentForm(request.POST, request.FILES)
         if form.is_valid():
-            discard_active_document(request)
-
             document = form.save(commit=False)
             document.owner = request.user
             uploaded_name = form.cleaned_data['file'].name
@@ -88,7 +78,6 @@ def homepage(request):
                 messages.error(request, str(error))
                 return redirect('homepage')
 
-            request.session['active_doc_uid'] = str(document.uid)
             return redirect('signature_workspace', uid=document.uid)
     else:
         form = DocumentForm()
@@ -113,15 +102,12 @@ def homepage(request):
 
 @login_required
 def signature_workspace(request, uid):
-    if str(uid) != request.session.get('active_doc_uid'):
-        return redirect('homepage')
-
-    document = get_active_document(request)
+    document = get_editable_document(request, uid)
     if document is None:
+        if Document.objects.filter(uid=uid, owner=request.user).exists():
+            return redirect('document_detail', uid=uid)
         messages.warning(request, EXPIRED_MESSAGE)
         return redirect('homepage')
-
-    document.mark_seen()
 
     pages = []
     for page in document.pages.all():
@@ -134,6 +120,7 @@ def signature_workspace(request, uid):
         'pages': pages,
     }
     context = {
+        'uid': document.uid,
         'original_url': document.file.url,
         'mode': document.mode,
         'can_autoplace': can_autoplace(document),
@@ -142,36 +129,11 @@ def signature_workspace(request, uid):
     return render(request, 'editor.html', context)
 
 
-@csrf_exempt
-def user_left_page(request):
+def autoplace(request, uid):
     if request.method != 'POST':
         return HttpResponse(status=405)
 
-    document = get_active_document(request)
-    if document:
-        document.mark_left()
-    return HttpResponse(status=204)
-
-
-@csrf_exempt
-def heartbeat(request):
-    if request.method != 'POST':
-        return HttpResponse(status=405)
-
-    document = get_active_document(request)
-    if document is None:
-        messages.warning(request, EXPIRED_MESSAGE)
-        return HttpResponse(status=410)
-
-    document.mark_seen()
-    return HttpResponse(status=204)
-
-
-def autoplace(request):
-    if request.method != 'POST':
-        return HttpResponse(status=405)
-
-    document = get_active_document(request)
+    document = get_editable_document(request, uid)
     if document is None:
         return JsonResponse({'error': EXPIRED_MESSAGE}, status=410)
     if not can_autoplace(document):
@@ -304,11 +266,11 @@ def create_signers(document, placeholders):
     return len(signers_by_email)
 
 
-def send_for_signing(request):
+def send_for_signing(request, uid):
     if request.method != 'POST':
         return HttpResponse(status=405)
 
-    document = get_active_document(request)
+    document = get_editable_document(request, uid)
     if document is None:
         return JsonResponse({'error': EXPIRED_MESSAGE}, status=410)
     if document.mode != 'multi':
@@ -338,8 +300,6 @@ def send_for_signing(request):
     except (smtplib.SMTPException, OSError):
         return JsonResponse({'error': EMAIL_FAILED_MESSAGE}, status=500)
 
-    request.session.pop('active_doc_uid', None)
-
     if signer_count == 1:
         messages.success(request, f'"{document.filename}" was sent to 1 person.')
     else:
@@ -347,11 +307,11 @@ def send_for_signing(request):
     return JsonResponse({'redirect': reverse('homepage')})
 
 
-def export_signed(request):
+def export_signed(request, uid):
     if request.method != 'POST':
         return HttpResponse(status=405)
 
-    document = get_active_document(request)
+    document = get_editable_document(request, uid)
     if document is None:
         return JsonResponse({'error': EXPIRED_MESSAGE}, status=410)
 
@@ -476,3 +436,36 @@ def document_pdf(request, uid):
         as_attachment=download,
         filename=document.filename + '.pdf',
     )
+
+
+@login_required
+def send_reminder(request, uid):
+    if request.method != 'POST':
+        return HttpResponse(status=405)
+
+    document = get_object_or_404(Document, uid=uid, owner=request.user)
+
+    if document.status != 'waiting':
+        messages.error(request, 'This document is not waiting for anyone to sign.')
+        return redirect('document_detail', uid=uid)
+
+    if document.reminded_at is not None:
+        next_reminder = document.reminded_at + REMIND_AGAIN_AFTER
+        if timezone.now() < next_reminder:
+            messages.error(request, 'You already sent a reminder in the last hour. Try again later.')
+            return redirect('document_detail', uid=uid)
+
+    try:
+        count = send_reminders(document)
+    except (smtplib.SMTPException, OSError):
+        messages.error(request, EMAIL_FAILED_MESSAGE)
+        return redirect('document_detail', uid=uid)
+
+    document.reminded_at = timezone.now()
+    document.save()
+
+    if count == 1:
+        messages.success(request, 'A reminder was sent to 1 person.')
+    else:
+        messages.success(request, f'A reminder was sent to {count} people.')
+    return redirect('document_detail', uid=uid)
