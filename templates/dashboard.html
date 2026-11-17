@@ -177,7 +177,7 @@
             background: #fffbeb;
             color: #b45309;
         }
-        .badge.cancelled {
+        .badge.cancelled, .badge.declined {
             background: #fef2f2;
             color: #b91c1c;
         }
@@ -336,6 +336,7 @@
         <div class="right">
             <button type="button" class="primary new-button" onclick="OpenUploadDialog()">Sign a new document</button>
             <span class="user">{{ user.username }}</span>
+            <a class="button" href="{% url 'account' %}">My account</a>
             <form method="post" action="{% url 'logout' %}">
                 {% csrf_token %}
                 <button type="submit">Log out</button>
@@ -367,6 +368,7 @@
                 <option value="" {% if status == '' %}selected{% endif %}>All</option>
                 <option value="waiting" {% if status == 'waiting' %}selected{% endif %}>Waiting</option>
                 <option value="signed" {% if status == 'signed' %}selected{% endif %}>Signed</option>
+                <option value="declined" {% if status == 'declined' %}selected{% endif %}>Declined</option>
                 <option value="cancelled" {% if status == 'cancelled' %}selected{% endif %}>Cancelled</option>
             </select>
             <button type="submit">Search</button>
@@ -395,6 +397,8 @@
             </span>
             {% elif row.document.status == 'cancelled' %}
             <span class="badge cancelled">Cancelled</span>
+            {% elif row.document.status == 'declined' %}
+            <span class="badge declined">Declined</span>
             {% else %}
             <span class="badge waiting">{{ row.signed }} of {{ row.total }} signed</span>
             {% endif %}
@@ -423,6 +427,10 @@
 
             {% if row.signer.signed_at %}
             <span class="badge signed">You signed</span>
+            {% elif row.signer.declined_at %}
+            <span class="badge declined">You declined</span>
+            {% elif row.document.status == 'declined' %}
+            <span class="badge declined">Declined</span>
             {% elif row.document.status == 'cancelled' %}
             <span class="badge cancelled">Cancelled</span>
             {% else %}

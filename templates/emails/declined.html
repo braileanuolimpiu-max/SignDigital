@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<body style="margin: 0; padding: 24px; background: #f4f7f6; font-family: Arial, sans-serif; color: #374151;">
+    <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 10px; padding: 28px; text-align: center;">
+        <h2 style="margin: 0 0 12px; font-size: 18px; color: #111827;">{{ signer.name }} declined to sign</h2>
+        <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5;">
+            <strong>{{ document.filename }}</strong>
+        </p>
+        {% if signer.decline_reason %}
+        <p style="margin: 0 0 8px; font-size: 14px; line-height: 1.5;">Their reason:</p>
+        <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #6b7280;">{{ signer.decline_reason }}</p>
+        {% else %}
+        <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #6b7280;">They did not give a reason.</p>
+        {% endif %}
+        <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.5;">
+            Nobody can sign this document anymore. You can reply to this email to talk to {{ signer.name }}.
+        </p>
+        <a href="{{ link }}" style="display: inline-block; padding: 10px 22px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 14px;">Open the document</a>
+    </div>
+</body>
+</html>

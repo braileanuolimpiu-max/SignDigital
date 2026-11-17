@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from datetime import timedelta
 from unittest.mock import patch
@@ -440,3 +441,110 @@ class DocumentOwnerTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Ana')
+
+
+class AccountPageTests(TestCase):
+    def setUp(self):
+        self.ion = User.objects.create_user('ion', 'ion@example.com', PASSWORD)
+        self.client.force_login(self.ion)
+
+    def tearDown(self):
+        for document in Document.objects.all():
+            document.delete_with_files()
+
+    def test_page_needs_login(self):
+        response = self.client_class().get('/account/')
+
+        self.assertRedirects(response, '/login/?next=/account/')
+
+    def test_page_shows_the_account(self):
+        response = self.client.get('/account/')
+
+        self.assertContains(response, 'ion@example.com')
+        self.assertContains(response, 'Change your password')
+        self.assertContains(response, 'Delete your account')
+
+    def test_dashboard_links_to_the_account_page(self):
+        response = self.client.get('/')
+
+        self.assertContains(response, 'href="/account/"')
+
+    def test_change_name(self):
+        response = self.client.post('/account/', {
+            'action': 'name',
+            'first_name': 'Ion',
+            'last_name': 'Pop',
+        }, follow=True)
+
+        self.assertContains(response, 'Your name was saved.')
+        self.ion.refresh_from_db()
+        self.assertEqual(self.ion.get_full_name(), 'Ion Pop')
+
+    def test_name_cannot_be_empty(self):
+        response = self.client.post('/account/', {'action': 'name', 'first_name': '', 'last_name': ''})
+
+        self.assertContains(response, 'This field is required.')
+
+    def test_change_password(self):
+        response = self.client.post('/account/', {
+            'action': 'password',
+            'old_password': PASSWORD,
+            'new_password1': 'another-long-password-456',
+            'new_password2': 'another-long-password-456',
+        }, follow=True)
+
+        self.assertContains(response, 'Your password was changed.')
+        self.ion.refresh_from_db()
+        self.assertTrue(self.ion.check_password('another-long-password-456'))
+        response = self.client.get('/account/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_change_password_needs_the_old_one(self):
+        response = self.client.post('/account/', {
+            'action': 'password',
+            'old_password': 'wrong-password',
+            'new_password1': 'another-long-password-456',
+            'new_password2': 'another-long-password-456',
+        })
+
+        self.assertContains(response, 'Your old password was entered incorrectly.')
+        self.ion.refresh_from_db()
+        self.assertTrue(self.ion.check_password(PASSWORD))
+
+    def test_delete_needs_the_password(self):
+        response = self.client.post('/account/', {'action': 'delete', 'password': 'wrong-password'})
+
+        self.assertContains(response, 'The password is wrong.')
+        self.assertTrue(User.objects.filter(username='ion').exists())
+
+    def test_delete_removes_the_account_and_documents(self):
+        self.client.post('/', {'file': make_png(), 'mode': 'solo'})
+        document = Document.objects.get()
+        folder = document.folder_path
+        self.assertTrue(os.path.isdir(folder))
+
+        response = self.client.post('/account/', {'action': 'delete', 'password': PASSWORD})
+
+        self.assertContains(response, 'Your account was deleted')
+        self.assertFalse(User.objects.filter(username='ion').exists())
+        self.assertEqual(Document.objects.count(), 0)
+        self.assertFalse(os.path.isdir(folder))
+        response = self.client.get('/')
+        self.assertRedirects(response, '/login/?next=/')
+
+    def test_delete_keeps_documents_sent_by_others(self):
+        maria = User.objects.create_user('maria', 'maria@example.com', PASSWORD)
+        self.client.force_login(maria)
+        self.client.post('/', {'file': make_png(), 'mode': 'multi'})
+        document = Document.objects.get()
+        self.client.post(f'/editor/{document.uid}/send/', {
+            'placeholders': json.dumps([placeholder('Ion', 'ion@example.com')]),
+            'page_1': make_jpeg(),
+            'overlay_1': make_overlay(),
+        })
+        self.client.force_login(self.ion)
+
+        self.client.post('/account/', {'action': 'delete', 'password': PASSWORD})
+
+        self.assertFalse(User.objects.filter(username='ion').exists())
+        self.assertEqual(Document.objects.count(), 1)

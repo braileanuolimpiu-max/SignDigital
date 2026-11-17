@@ -2,7 +2,8 @@ import smtplib
 
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import login
+from django.contrib.auth import login, logout, update_session_auth_hash
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import EmailMessage
@@ -12,7 +13,7 @@ from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
-from .forms import ResendConfirmationForm, SignupForm
+from .forms import ChangePasswordForm, DeleteAccountForm, NameForm, ResendConfirmationForm, SignupForm
 from .models import email_sent_recently, remember_sent_email
 
 EMAIL_FAILED_MESSAGE = 'The confirmation email could not be sent. Try again later.'
@@ -141,3 +142,60 @@ def resend_confirmation(request):
         'other_link_text': 'Log in',
     }
     return render(request, 'auth.html', context)
+
+
+def delete_account_documents(user):
+    for document in user.documents.all():
+        try:
+            document.delete_with_files()
+        except OSError:
+            return False
+    return True
+
+
+@login_required
+def account(request):
+    name_form = NameForm(instance=request.user)
+    password_form = ChangePasswordForm(request.user)
+    delete_form = DeleteAccountForm(request.user)
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        if action == 'name':
+            name_form = NameForm(request.POST, instance=request.user)
+            if name_form.is_valid():
+                name_form.save()
+                messages.success(request, 'Your name was saved.')
+                return redirect('account')
+
+        if action == 'password':
+            password_form = ChangePasswordForm(request.user, request.POST)
+            if password_form.is_valid():
+                user = password_form.save()
+                update_session_auth_hash(request, user)
+                messages.success(request, 'Your password was changed.')
+                return redirect('account')
+
+        if action == 'delete':
+            delete_form = DeleteAccountForm(request.user, request.POST)
+            if delete_form.is_valid():
+                if not delete_account_documents(request.user):
+                    messages.error(request, 'Your documents could not be deleted right now. Try again in a minute.')
+                    return redirect('account')
+
+                user = request.user
+                logout(request)
+                user.delete()
+                return show_message(
+                    request,
+                    'Your account was deleted',
+                    'Your account and all your documents are gone.',
+                )
+
+    context = {
+        'name_form': name_form,
+        'password_form': password_form,
+        'delete_form': delete_form,
+    }
+    return render(request, 'account.html', context)

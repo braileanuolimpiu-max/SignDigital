@@ -25,6 +25,7 @@ from .signing import (
     build_signed_pdf,
     read_saved_overlays,
     save_overlays,
+    send_decline_notice,
     send_invitations,
     send_reminders,
     send_signed_copy,
@@ -34,6 +35,7 @@ EXPIRED_MESSAGE = 'Your document expired. Please upload it again.'
 EMAIL_FAILED_MESSAGE = 'The emails could not be sent. Check the email settings and try again.'
 AUTOPLACE_ONLY_MESSAGE = 'Auto Place works only on PDF and Word files.'
 REMIND_AGAIN_AFTER = timedelta(hours=1)
+DECLINE_REASON_LENGTH = 500
 
 
 class SendError(Exception):
@@ -464,6 +466,13 @@ def sign_document(request, token):
             'The sender cancelled it, so it cannot be signed anymore.',
         )
 
+    if document.status == 'declined':
+        return show_finished(
+            request,
+            'This document was declined',
+            'Someone declined to sign it, so it cannot be signed anymore.',
+        )
+
     if not signer_is_allowed(request, signer):
         if not request.user.is_authenticated:
             return redirect_to_login(request.get_full_path())
@@ -478,6 +487,33 @@ def sign_document(request, token):
             request,
             'You already signed',
             'A signed copy was sent to your email.',
+        )
+
+    if request.method == 'POST' and request.POST.get('action') == 'decline':
+        reason = request.POST.get('reason', '')
+        reason = reason.strip()
+        reason = reason[:DECLINE_REASON_LENGTH]
+
+        signer.declined_at = timezone.now()
+        signer.decline_reason = reason
+        signer.save()
+        document.declined_at = signer.declined_at
+        document.save()
+
+        text = f'Declined by {signer.name} ({signer.email})'
+        if reason != '':
+            text = text + '. Reason: ' + reason
+        add_event(request, document, text)
+
+        try:
+            send_decline_notice(document, signer)
+        except (smtplib.SMTPException, OSError):
+            pass
+
+        return show_finished(
+            request,
+            'You declined to sign',
+            'The sender was told. Nobody can sign this document anymore.',
         )
 
     if request.method == 'POST':
@@ -653,6 +689,8 @@ def sign_page_image(request, token, number):
     signer = get_object_or_404(Signer, token=token)
     if signer.document.status == 'cancelled':
         raise Http404('Document cancelled')
+    if signer.document.status == 'declined':
+        raise Http404('Document declined')
     if not signer_is_allowed(request, signer):
         raise Http404('Not allowed')
     return page_image_response(signer.document, number)

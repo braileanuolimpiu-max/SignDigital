@@ -41,6 +41,7 @@ class Document(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     reminded_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    declined_at = models.DateTimeField(null=True, blank=True)
     require_login = models.BooleanField(default=False)
     original_hash = models.CharField(max_length=64, blank=True)
 
@@ -81,6 +82,8 @@ class Document(models.Model):
             return 'signed'
         if self.cancelled_at is not None:
             return 'cancelled'
+        if self.declined_at is not None:
+            return 'declined'
         if self.sent_at is not None:
             return 'waiting'
         return 'draft'
@@ -110,6 +113,8 @@ class Signer(models.Model):
     email = models.EmailField()
     token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     signed_at = models.DateTimeField(null=True, blank=True)
+    declined_at = models.DateTimeField(null=True, blank=True)
+    decline_reason = models.CharField(max_length=500, blank=True)
 
 
 class Placeholder(models.Model):

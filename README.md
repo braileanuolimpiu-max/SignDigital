@@ -25,12 +25,16 @@ image, sign it yourself, or send it to other people to sign by email.
   writes it when you sign a document yourself
 - **Signing record**: every PDF ends with a page that lists the document ID, a SHA-256
   fingerprint of the original file, the signers and the full history (uploaded, sent,
-  opened, signed, reminded, cancelled) with the time and IP address of each step
+  opened, signed, declined, reminded, cancelled) with the time and IP address of each step
 - **Login limit**: after 5 wrong passwords, that username is locked for 15 minutes
 - **Cancel and delete**: cancel a document that is still waiting (its signing links stop
   working), or delete a document and its files for good
-- **Search and filters**: find documents by name or sender, and show only waiting, signed or
-  cancelled ones
+- **Search and filters**: find documents by name or sender, and show only waiting, signed,
+  declined or cancelled ones
+- **Decline to sign**: a signer can press **Decline** and give a reason. The sender gets an
+  email with the reason, and nobody can sign the document anymore
+- **My account**: change your name (your signature) or your password, or delete your account
+  together with every document you uploaded or sent
 - **Private files**: uploaded files and page images are never public; only the owner, or a
   signer through their own link, can open them
 - **Signers must log in (optional)**: when sending, tick "Signers must log in with their

@@ -2114,3 +2114,138 @@ class AutoPlaceTests(SignElectricTestCase):
         response = self.client.post(self.editor_url('autoplace'))
 
         self.assertEqual(response.status_code, 410)
+
+
+class DeclineTests(SignElectricTestCase):
+    def setUp(self):
+        super().setUp()
+        self.send([
+            placeholder('Ana', 'ana@example.com'),
+            placeholder('Dan', 'dan@example.com'),
+        ])
+        self.document = Document.objects.get()
+        self.ana = Signer.objects.get(email='ana@example.com')
+        self.dan = Signer.objects.get(email='dan@example.com')
+        mail.outbox = []
+
+    def decline(self, signer, reason=''):
+        return self.client_class().post(f'/sign/{signer.token}/', {'action': 'decline', 'reason': reason})
+
+    def test_sign_page_has_a_decline_button(self):
+        response = self.client_class().get(f'/sign/{self.ana.token}/')
+
+        self.assertContains(response, 'Decline to sign?')
+        self.assertContains(response, 'name="reason"')
+
+    def test_decline_stops_the_document(self):
+        response = self.decline(self.ana, 'The price is wrong.')
+
+        self.assertContains(response, 'You declined to sign')
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.status, 'declined')
+        ana = Signer.objects.get(email='ana@example.com')
+        self.assertIsNotNone(ana.declined_at)
+        self.assertIsNone(ana.signed_at)
+        self.assertEqual(ana.decline_reason, 'The price is wrong.')
+
+    def test_sender_gets_an_email_with_the_reason(self):
+        self.decline(self.ana, 'The price is wrong.')
+
+        self.assertEqual(len(mail.outbox), 1)
+        email = mail.outbox[0]
+        self.assertEqual(email.to, ['boss@example.com'])
+        self.assertEqual(email.reply_to, ['ana@example.com'])
+        self.assertIn('Ana declined to sign', email.subject)
+        self.assertIn('The price is wrong.', email.body)
+
+    def test_decline_without_a_reason(self):
+        self.decline(self.ana)
+
+        self.assertEqual(Document.objects.get().status, 'declined')
+        self.assertIn('They did not give a reason.', mail.outbox[0].body)
+
+    def test_reason_is_cut_to_500_characters(self):
+        self.decline(self.ana, 'x' * 800)
+
+        self.assertEqual(len(Signer.objects.get(email='ana@example.com').decline_reason), 500)
+
+    def test_nobody_can_sign_after_a_decline(self):
+        self.decline(self.ana)
+
+        response = self.client_class().get(f'/sign/{self.dan.token}/')
+        self.assertContains(response, 'This document was declined')
+        response = self.client_class().post(f'/sign/{self.dan.token}/')
+        self.assertContains(response, 'This document was declined')
+        self.assertIsNone(Signer.objects.get(email='dan@example.com').signed_at)
+        response = self.client_class().get(f'/sign/{self.dan.token}/page/1/')
+        self.assertEqual(response.status_code, 404)
+        response = self.decline(self.ana)
+        self.assertContains(response, 'This document was declined')
+
+    def test_signed_person_cannot_decline(self):
+        self.client_class().post(f'/sign/{self.ana.token}/')
+
+        response = self.decline(self.ana)
+
+        self.assertContains(response, 'You already signed')
+        self.assertEqual(Document.objects.get().status, 'waiting')
+
+    def test_owner_sees_the_decline(self):
+        self.decline(self.ana, 'The price is wrong.')
+
+        response = self.client.get('/')
+        self.assertContains(response, '<span class="badge declined">Declined</span>', html=True)
+        response = self.client.get('/?status=declined')
+        self.assertContains(response, '<div class="name">photo</div>', html=True)
+
+        response = self.client.get(f'/documents/{self.document.uid}/')
+        self.assertContains(response, 'Declined on')
+        self.assertContains(response, '"The price is wrong."')
+        self.assertNotContains(response, 'Send reminder')
+        self.assertNotContains(response, 'Cancel signing')
+
+    def test_signer_with_account_sees_you_declined(self):
+        User.objects.create_user('ana', 'ana@example.com', 'a-long-password-123')
+        self.decline(self.ana)
+        self.client.login(username='ana', password='a-long-password-123')
+
+        response = self.client.get('/?show=received')
+
+        self.assertContains(response, '<span class="badge declined">You declined</span>', html=True)
+
+    def test_declined_document_cannot_get_a_reminder(self):
+        self.decline(self.ana)
+        mail.outbox = []
+
+        response = self.client.post(f'/documents/{self.document.uid}/remind/', follow=True)
+
+        self.assertContains(response, 'This document is not waiting for anyone to sign.')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_decline_is_in_the_signing_record(self):
+        self.decline(self.ana, 'The price is wrong.')
+
+        event = AuditEvent.objects.filter(document=self.document).last()
+        self.assertEqual(event.text, 'Declined by Ana (ana@example.com). Reason: The price is wrong.')
+
+        response = self.client.get(f'/documents/{self.document.uid}/pdf/')
+        pdf = pymupdf.open(stream=b''.join(response.streaming_content), filetype='pdf')
+        text = pdf[-1].get_text()
+        self.assertIn('Status: Declined on', text)
+        self.assertIn('Declined by Ana', text)
+
+    def test_decline_works_when_the_email_fails(self):
+        with patch('documents.views.send_decline_notice', side_effect=OSError):
+            response = self.decline(self.ana)
+
+        self.assertContains(response, 'You declined to sign')
+        self.assertEqual(Document.objects.get().status, 'declined')
+
+    def test_decline_needs_login_when_required(self):
+        self.document.require_login = True
+        self.document.save()
+
+        response = self.decline(self.ana)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Document.objects.get().status, 'waiting')

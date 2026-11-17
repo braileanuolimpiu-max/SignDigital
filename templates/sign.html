@@ -51,6 +51,79 @@
         .sign-button:hover {
             background: #1d4ed8;
         }
+        .buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .decline-button, dialog button {
+            font: inherit;
+            font-size: 15px;
+            padding: 10px 20px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #ffffff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .decline-button:hover, dialog button:hover {
+            background: #f3f4f6;
+        }
+        dialog {
+            width: min(420px, calc(100% - 32px));
+            box-sizing: border-box;
+            padding: 24px;
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        dialog::backdrop {
+            background: rgba(0,0,0,0.35);
+        }
+        dialog form {
+            margin: 0;
+        }
+        dialog h2 {
+            margin: 0 0 8px;
+            font-size: 18px;
+            color: #111827;
+        }
+        dialog p {
+            margin: 0 0 16px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        dialog label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        dialog textarea {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            font: inherit;
+            font-size: 14px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            resize: vertical;
+        }
+        .dialog-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 16px;
+        }
+        dialog button.danger {
+            border-color: #b91c1c;
+            background: #b91c1c;
+            color: #ffffff;
+        }
+        dialog button.danger:hover {
+            background: #991b1b;
+        }
         .pages {
             padding: 24px 16px;
         }
@@ -95,11 +168,29 @@
             <h1>{{ document.sender_email }} asks you to sign "{{ document.filename }}"</h1>
             <p>Your name, {{ signer.name }}, will be placed in the yellow boxes.</p>
         </div>
+        <div class="buttons">
+            <button type="button" class="decline-button" onclick="OpenDeclineDialog()">Decline</button>
+            <form method="post">
+                {% csrf_token %}
+                <button type="submit" class="sign-button">Sign</button>
+            </form>
+        </div>
+    </div>
+
+    <dialog id="DeclineDialog">
         <form method="post">
             {% csrf_token %}
-            <button type="submit" class="sign-button">Sign</button>
+            <input type="hidden" name="action" value="decline">
+            <h2>Decline to sign?</h2>
+            <p>The sender will get an email, and nobody will be able to sign this document anymore.</p>
+            <label for="Reason">Reason (optional)</label>
+            <textarea id="Reason" name="reason" maxlength="500" rows="4"></textarea>
+            <div class="dialog-buttons">
+                <button type="button" onclick="CloseDeclineDialog()">Keep the document</button>
+                <button type="submit" class="danger">Decline</button>
+            </div>
         </form>
-    </div>
+    </dialog>
 
     <div class="pages">
         {% for page in pages %}
@@ -114,5 +205,17 @@
         </div>
         {% endfor %}
     </div>
+
+    <script>
+        const declineDialog = document.getElementById('DeclineDialog');
+
+        function OpenDeclineDialog() {
+            declineDialog.showModal();
+        }
+
+        function CloseDeclineDialog() {
+            declineDialog.close();
+        }
+    </script>
 </body>
 </html>

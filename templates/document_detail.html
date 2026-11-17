@@ -139,6 +139,19 @@
             color: #b45309;
             font-size: 12px;
         }
+        .signer .declined {
+            flex: none;
+            color: #b91c1c;
+            font-size: 12px;
+            text-align: right;
+        }
+        .signer .reason {
+            margin-top: 4px;
+            font-size: 12px;
+            color: #6b7280;
+            font-style: italic;
+            word-break: break-word;
+        }
         .sign-now {
             display: block;
             margin-top: 14px;
@@ -185,7 +198,7 @@
             background: #fef2f2;
             color: #b91c1c;
         }
-        .status.cancelled {
+        .status.cancelled, .status.declined {
             color: #b91c1c;
         }
         .actions {
@@ -289,7 +302,7 @@
             background: #fef2f2;
             color: #b91c1c;
         }
-        .status.cancelled {
+        .status.cancelled, .status.declined {
             color: #b91c1c;
         }
         .actions {
@@ -383,7 +396,7 @@
             background: #fef2f2;
             color: #b91c1c;
         }
-        .status.cancelled {
+        .status.cancelled, .status.declined {
             color: #b91c1c;
         }
         .actions {
@@ -459,6 +472,8 @@
                 <p class="status">Signed by everyone on {{ document.finished_at|date:"j M Y, H:i" }}.</p>
                 {% elif document.status == 'cancelled' %}
                 <p class="status cancelled">Cancelled on {{ document.cancelled_at|date:"j M Y, H:i" }}. {{ signed }} of {{ total }} people had signed.</p>
+                {% elif document.status == 'declined' %}
+                <p class="status declined">Declined on {{ document.declined_at|date:"j M Y, H:i" }}. {{ signed }} of {{ total }} people had signed.</p>
                 {% else %}
                 <p class="status">{{ signed }} of {{ total }} people signed. Sent on {{ document.sent_at|date:"j M Y, H:i" }}.</p>
                 {% endif %}
@@ -495,10 +510,15 @@
                         <div>
                             {{ signer.name }}
                             <div class="email">{{ signer.email }}</div>
+                            {% if signer.decline_reason %}
+                            <div class="reason">"{{ signer.decline_reason }}"</div>
+                            {% endif %}
                         </div>
                         {% if signer.signed_at %}
                         <span class="signed">Signed<br>{{ signer.signed_at|date:"j M Y, H:i" }}</span>
-                        {% elif document.status == 'cancelled' %}
+                        {% elif signer.declined_at %}
+                        <span class="declined">Declined<br>{{ signer.declined_at|date:"j M Y, H:i" }}</span>
+                        {% elif document.status == 'cancelled' or document.status == 'declined' %}
                         <span class="waiting">Did not sign</span>
                         {% else %}
                         <span class="waiting">Waiting</span>

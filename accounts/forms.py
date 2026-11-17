@@ -1,5 +1,10 @@
 from django import forms
-from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, UserCreationForm
+from django.contrib.auth.forms import (
+    AuthenticationForm,
+    PasswordChangeForm,
+    PasswordResetForm,
+    UserCreationForm,
+)
 from django.contrib.auth.models import User
 
 from .models import (
@@ -72,3 +77,32 @@ class LimitedPasswordResetForm(PasswordResetForm):
 
         remember_sent_email(email, 'reset')
         return super().get_users(email)
+
+
+class NameForm(forms.ModelForm):
+    first_name = forms.CharField(max_length=150, label='First name')
+    last_name = forms.CharField(max_length=150, label='Last name')
+
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name']
+
+
+class DeleteAccountForm(forms.Form):
+    password = forms.CharField(label='Your password', widget=forms.PasswordInput)
+
+    def __init__(self, user, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+
+    def clean_password(self):
+        password = self.cleaned_data['password']
+        if not self.user.check_password(password):
+            raise forms.ValidationError('The password is wrong.')
+        return password
+
+
+class ChangePasswordForm(PasswordChangeForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['old_password'].widget.attrs.pop('autofocus', None)

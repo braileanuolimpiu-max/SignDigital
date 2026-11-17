@@ -56,6 +56,8 @@
 <p><b>Status:</b> Signed on {{ document.finished_at|date:"j M Y, H:i:s" }}</p>
 {% elif document.status == 'cancelled' %}
 <p><b>Status:</b> Cancelled on {{ document.cancelled_at|date:"j M Y, H:i:s" }}</p>
+{% elif document.status == 'declined' %}
+<p><b>Status:</b> Declined on {{ document.declined_at|date:"j M Y, H:i:s" }}</p>
 {% elif document.status == 'waiting' %}
 <p><b>Status:</b> Waiting for signatures</p>
 {% endif %}
@@ -68,7 +70,7 @@
     <tr>
         <td>{{ signer.name }}</td>
         <td>{{ signer.email }}</td>
-        <td>{% if signer.signed_at %}{{ signer.signed_at|date:"j M Y, H:i:s" }}{% else %}Not signed{% endif %}</td>
+        <td>{% if signer.signed_at %}{{ signer.signed_at|date:"j M Y, H:i:s" }}{% elif signer.declined_at %}Declined {{ signer.declined_at|date:"j M Y, H:i:s" }}{% else %}Not signed{% endif %}</td>
     </tr>
     {% endfor %}
 </table>

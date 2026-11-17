@@ -223,3 +223,22 @@ def send_signed_copy(document, signer):
     email.content_subtype = 'html'
     email.attach(f'{document.filename}.pdf', pdf, 'application/pdf')
     email.send()
+
+
+def send_decline_notice(document, signer):
+    context = {
+        'document': document,
+        'signer': signer,
+        'link': settings.SITE_URL + reverse('document_detail', args=[document.uid]),
+    }
+    html = render_to_string('emails/declined.html', context)
+
+    email = EmailMessage(
+        subject=f'{signer.name} declined to sign "{document.filename}"',
+        body=html,
+        from_email=from_address(signer.name),
+        to=[document.sender_email],
+        reply_to=[signer.email],
+    )
+    email.content_subtype = 'html'
+    email.send()
