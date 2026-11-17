@@ -20,20 +20,23 @@ from django.views.decorators.clickjacking import xframe_options_sameorigin
 from .autoplace import analyze_document, can_autoplace
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
-from .models import AuditEvent, Document, Placeholder, Signer, delete_old_drafts
+from .models import AuditEvent, Document, Placeholder, Signer, delete_if_possible, delete_old_drafts
 from .signing import (
     build_signed_pdf,
+    has_signature,
     read_saved_overlays,
     save_overlays,
     send_decline_notice,
     send_invitations,
     send_reminders,
     send_signed_copy,
+    signed_file_name,
 )
 
 EXPIRED_MESSAGE = 'Your document expired. Please upload it again.'
 EMAIL_FAILED_MESSAGE = 'The emails could not be sent. Check the email settings and try again.'
 AUTOPLACE_ONLY_MESSAGE = 'Auto Place works only on PDF and Word files.'
+NOTHING_TO_SIGN_MESSAGE = 'Add your signature to the document before signing.'
 REMIND_AGAIN_AFTER = timedelta(hours=1)
 DECLINE_REASON_LENGTH = 500
 
@@ -130,7 +133,7 @@ def homepage(request):
             try:
                 build_pages(document)
             except ConversionError as error:
-                document.delete_with_files()
+                delete_if_possible(document)
                 messages.error(request, str(error))
                 return redirect('homepage')
 
@@ -427,6 +430,9 @@ def export_signed(request, uid):
     except SendError as error:
         return JsonResponse({'error': str(error)}, status=400)
 
+    if document.mode == 'solo' and not has_signature(overlays):
+        return JsonResponse({'error': NOTHING_TO_SIGN_MESSAGE}, status=400)
+
     save_overlays(document, overlays)
     if document.mode == 'solo':
         document.finished_at = timezone.now()
@@ -616,7 +622,7 @@ def document_pdf(request, uid):
         io.BytesIO(pdf),
         content_type='application/pdf',
         as_attachment=download,
-        filename=document.filename + '.pdf',
+        filename=signed_file_name(document, document.status == 'signed'),
     )
 
 

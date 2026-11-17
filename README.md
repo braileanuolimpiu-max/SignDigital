@@ -123,11 +123,16 @@ Upload limits (`MAX_UPLOAD_SIZE`, `MAX_PAGES`) are set in `config/settings.py`.
 Auto Place reads the text of PDF and Word files (images have no text, so the button is
 hidden for them) and looks for places to sign:
 
-- Labels like `Signature`, `Semnătura`, `Signed by`, `Sign here`, `Semnătura olografă`, `Подпись`
-- The line after the label, typed (`________`) or drawn by Word (underlined spaces)
-- An empty box after or under the label, or the empty room under the label in a table cell
-- The signer's name: before the label, after a slash (`____ /Ion Pop/`), or on the lines
-  above it (`SRL Sugar Soft prin Ion Pop`, a company name, or a role like `Prestator`)
+- Labels like `Signature`, `Semnătura`, `Signed by`, `Sign here`, `Semnătura olografă`, `Подпись`,
+  also with a few more words before the colon (`Signature / Date:`, `Signature of the employee:`)
+- The line after the label, typed (`________`) or drawn by Word (underlined spaces), or the
+  line right above it (`________` with `(signature)` under it)
+- An empty box or table cell after or under the label, or the empty room under the label in a cell
+- A `Signature` column in a table: one place in every row, named after the person in that row
+- The signer's name: before the label, after a slash (`____ /Ion Pop/`), on the lines above it
+  (`SRL Sugar Soft prin Ion Pop`, a company name, or a role like `Prestator`), or right under it.
+  In two columns side by side, each label only takes the name from its own column
+- Pages turned sideways in the PDF are read the way they are shown
 - In **Multiple signing**, also lines with no label (typed or drawn), often with the name under them
 
 It skips places that are already signed, lines inside tables, lines under text,

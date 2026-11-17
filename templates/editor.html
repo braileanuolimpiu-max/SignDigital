@@ -734,7 +734,22 @@
         }, 2500);
     }
 
+    function hasSignature() {
+        for (const pageCanvas of pageCanvases) {
+            for (const object of pageCanvas.getObjects()) {
+                if (!object.isPlaceholder) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     async function ExportPDF() {
+        if (!hasSignature()) {
+            showFinishMessage('Add your signature first');
+            return;
+        }
         finishButton.disabled = true;
 
         try {
@@ -749,7 +764,9 @@
 
             if (response.ok) {
                 const pdf = await response.blob();
-                downloadFile(pdf, editorData.filename + '.pdf');
+                downloadFile(pdf, editorData.filename + ' - signed.pdf');
+            } else if (response.status === 400) {
+                showFinishMessage('Add your signature first');
             } else {
                 showFinishMessage('Try again');
             }

@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import sys
 import tempfile
 import uuid
 from datetime import timedelta
@@ -15,6 +16,7 @@ from django.utils import timezone
 from PIL import Image, ImageDraw
 import pymupdf
 
+from .converters import ConversionError, word_to_pdf
 from .autoplace import (
     find_lone_drawn_lines,
     find_lone_underlines,
@@ -745,7 +747,7 @@ class DashboardTests(SignElectricTestCase):
         response = self.client.get(f'/documents/{document.uid}/pdf/?download=1')
 
         self.assertIn('attachment', response['Content-Disposition'])
-        self.assertIn('photo.pdf', response['Content-Disposition'])
+        self.assertIn('photo - signed.pdf', response['Content-Disposition'])
 
     def test_other_user_cannot_see_the_document(self):
         document = self.export_solo()
@@ -2249,3 +2251,236 @@ class DeclineTests(SignElectricTestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(Document.objects.get().status, 'waiting')
+
+
+class EmptySignatureTests(SignElectricTestCase):
+    def empty_overlay(self):
+        image = Image.new('RGBA', (400, 300), (0, 0, 0, 0))
+        buffer = io.BytesIO()
+        image.save(buffer, 'PNG')
+        return SimpleUploadedFile('overlay.png', buffer.getvalue(), content_type='image/png')
+
+    def test_solo_sign_without_a_signature_is_refused(self):
+        self.upload(make_png())
+
+        response = self.client.post(self.editor_url('export'), {'overlay_1': self.empty_overlay()})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Add your signature to the document before signing.')
+        document = Document.objects.get()
+        self.assertEqual(document.status, 'draft')
+        self.assertEqual(AuditEvent.objects.filter(text__startswith='Signed by').count(), 0)
+
+    def test_solo_sign_works_after_adding_a_signature(self):
+        self.upload(make_png())
+        self.client.post(self.editor_url('export'), {'overlay_1': self.empty_overlay()})
+
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.get().status, 'signed')
+
+    def test_editor_checks_for_a_signature(self):
+        self.upload(make_png())
+
+        response = self.client.get(self.editor_url('').rstrip('/') + '/')
+
+        self.assertContains(response, 'Add your signature first')
+        self.assertContains(response, "editorData.filename + ' - signed.pdf'")
+
+    def test_waiting_document_keeps_its_plain_name(self):
+        self.send([placeholder('Ana', 'ana@example.com'), placeholder('Dan', 'dan@example.com')])
+        document = Document.objects.get()
+
+        response = self.client.get(f'/documents/{document.uid}/pdf/?download=1')
+
+        self.assertIn('photo.pdf', response['Content-Disposition'])
+
+    def test_last_signed_copy_email_has_the_signed_name(self):
+        self.send([placeholder('Ana', 'ana@example.com'), placeholder('Dan', 'dan@example.com')])
+        ana = Signer.objects.get(email='ana@example.com')
+        dan = Signer.objects.get(email='dan@example.com')
+
+        mail.outbox = []
+        self.client_class().post(f'/sign/{ana.token}/')
+        self.assertEqual(mail.outbox[0].attachments[0].filename, 'photo.pdf')
+
+        mail.outbox = []
+        self.client_class().post(f'/sign/{dan.token}/')
+        self.assertEqual(mail.outbox[0].attachments[0].filename, 'photo - signed.pdf')
+
+
+def read_rotated_page(angle, lines):
+    pdf = pymupdf.open()
+    page = pdf.new_page()
+    page.set_rotation(angle)
+    for x, y, text in lines:
+        page.insert_text(pymupdf.Point(x, y) * page.derotation_matrix, text, rotate=angle)
+    page.add_stamp_annot(pymupdf.Rect(400, 300, 500, 340) * page.derotation_matrix)
+    data = pdf.tobytes()
+    pdf.close()
+
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'rotated.pdf')
+        with open(path, 'wb') as file:
+            file.write(data)
+        pages = read_words(path)
+    return pages[0]
+
+
+def overlaps(first, second):
+    if first['left'] + first['width'] <= second['left']:
+        return False
+    if second['left'] + second['width'] <= first['left']:
+        return False
+    if first['top'] + first['height'] <= second['top']:
+        return False
+    if second['top'] + second['height'] <= first['top']:
+        return False
+    return True
+
+
+class MoreAutoPlaceTests(TestCase):
+    def test_rotated_pages_are_read_as_shown(self):
+        for angle in [90, 180, 270]:
+            page = read_rotated_page(angle, [(72, 300, 'Signature: __________')])
+
+            spots = find_signature_spots(page)
+
+            self.assertEqual(len(spots), 1)
+            box = spots[0]['box']
+            self.assertGreater(box['width'], box['height'])
+            self.assertAlmostEqual(spots[0]['keyword']['left'], to_page_pixels(72), delta=5)
+            self.assertAlmostEqual(box['top'] + box['height'], to_page_pixels(300), delta=15)
+            stamp = page['signed_areas'][0]
+            self.assertAlmostEqual(stamp['left'] + stamp['width'] / 2, to_page_pixels(450), delta=5)
+
+    def test_label_with_a_few_more_words(self):
+        page = read_first_page([
+            (72, 500, 'Signature of the employee: __________'),
+            (72, 540, 'Signature / Date: __________'),
+            (72, 580, 'Signature & stamp: __________'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 3)
+        for spot in spots:
+            self.assertEqual(spot['underline']['text'], '__________')
+
+    def test_sentence_about_signatures_is_not_a_label(self):
+        page = read_first_page([
+            (72, 500, 'An electronic signature has the same value as a handwritten one.'),
+            (72, 540, 'The signature, the stamp and the date are needed.'),
+        ])
+
+        self.assertEqual(find_signature_spots(page), [])
+
+    def test_names_in_two_columns_without_borders(self):
+        page = read_first_page([
+            (72, 500, 'Name: Ion Popescu'),
+            (320, 500, 'Name: Maria Ionescu'),
+            (72, 530, 'Signature:'),
+            (320, 530, 'Signature:'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        names = []
+        for spot in spots:
+            names.append(spot['name'])
+        self.assertEqual(names, ['Ion Popescu', 'Maria Ionescu'])
+
+    def test_underline_above_the_label(self):
+        page = read_first_page([
+            (72, 500, '____________________'),
+            (72, 525, 'Signature'),
+            (72, 550, 'Ion Popescu'),
+        ])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['name'], 'Ion Popescu')
+        self.assertLess(spots[0]['box']['top'], spots[0]['keyword']['top'])
+
+    def test_drawn_line_above_the_label(self):
+        page = read_first_page([(200, 525, '(signature)')], drawn=[(150, 502, 350, 502)])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(len(spots), 1)
+        box = spots[0]['box']
+        self.assertAlmostEqual(box['left'], to_page_pixels(150), delta=3)
+        self.assertAlmostEqual(box['top'] + box['height'], to_page_pixels(502), delta=3)
+
+    def test_empty_cell_right_of_the_label(self):
+        page = read_first_page(
+            [(76, 520, 'Signature')],
+            rects=[(72, 500, 172, 530), (172, 500, 400, 530)],
+        )
+
+        box = find_signature_spots(page)[0]['box']
+
+        self.assertGreater(box['left'], to_page_pixels(172))
+        self.assertLess(box['left'] + box['width'], to_page_pixels(400))
+
+    def test_signature_column_of_a_table(self):
+        rects = []
+        for top in [500, 525, 550, 575]:
+            rects.append((72, top, 172, top + 25))
+            rects.append((172, top, 300, top + 25))
+        page = read_first_page(
+            [
+                (76, 518, 'Name'),
+                (176, 518, 'Signature'),
+                (76, 543, 'Ion Popescu'),
+                (76, 568, 'Maria Ionescu'),
+                (76, 593, 'Dan Pop'),
+            ],
+            rects=rects,
+        )
+
+        spots = find_signature_spots(page)
+
+        names = []
+        for spot in spots:
+            names.append(spot['name'])
+            self.assertGreater(spot['box']['left'], to_page_pixels(172))
+        self.assertEqual(names, ['Ion Popescu', 'Maria Ionescu', 'Dan Pop'])
+
+    def test_box_under_a_label_does_not_cover_text(self):
+        page = read_first_page([(500, 500, 'Signature:'), (480, 516, 'Ion Popescu')])
+
+        spots = find_signature_spots(page)
+
+        self.assertEqual(spots[0]['name'], 'Ion Popescu')
+        for word in page['words']:
+            self.assertFalse(overlaps(word, spots[0]['box']))
+
+
+class ConversionFailureTests(SignElectricTestCase):
+    def test_failed_conversion_shows_the_message_even_if_files_are_busy(self):
+        with patch('documents.views.build_pages', side_effect=ConversionError('The Word file could not be converted.')):
+            with patch.object(Document, 'delete_with_files', side_effect=OSError):
+                response = self.upload(make_png())
+
+        self.assertEqual(response.status_code, 302)
+        response = self.client.get('/')
+        self.assertContains(response, 'The Word file could not be converted.')
+
+    def test_libreoffice_settings_go_to_a_temporary_folder(self):
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+
+        with tempfile.TemporaryDirectory() as folder:
+            with self.settings(LIBREOFFICE_PATH=sys.executable):
+                with patch('documents.converters.subprocess.run', side_effect=fake_run):
+                    with self.assertRaises(ConversionError):
+                        word_to_pdf(os.path.join(folder, 'original.docx'), folder)
+
+        setting = commands[0][1]
+        self.assertTrue(setting.startswith('-env:UserInstallation=file:///'))
+        self.assertNotIn(folder.replace(os.sep, '/'), setting)

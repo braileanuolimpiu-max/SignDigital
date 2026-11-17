@@ -1,6 +1,7 @@
 import os
-import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 from django.conf import settings
 from pdf2image import convert_from_path, pdfinfo_from_path
@@ -22,25 +23,20 @@ def word_to_pdf(word_path, output_dir):
     if not os.path.exists(settings.LIBREOFFICE_PATH):
         raise ConversionError('Word files are not supported on this server.')
 
-    profile_dir = os.path.join(output_dir, 'libreoffice_profile')
-    profile_url = 'file:///' + profile_dir.replace('\\', '/')
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as profile_dir:
+        command = [
+            settings.LIBREOFFICE_PATH,
+            '-env:UserInstallation=' + Path(profile_dir).as_uri(),
+            '--headless',
+            '--convert-to', 'pdf',
+            '--outdir', output_dir,
+            word_path,
+        ]
 
-    command = [
-        settings.LIBREOFFICE_PATH,
-        '-env:UserInstallation=' + profile_url,
-        '--headless',
-        '--convert-to', 'pdf',
-        '--outdir', output_dir,
-        word_path,
-    ]
-
-    try:
-        subprocess.run(command, capture_output=True, timeout=WORD_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        shutil.rmtree(profile_dir, ignore_errors=True)
-        raise ConversionError('The Word file took too long to convert.')
-
-    shutil.rmtree(profile_dir, ignore_errors=True)
+        try:
+            subprocess.run(command, capture_output=True, timeout=WORD_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise ConversionError('The Word file took too long to convert.')
 
     pdf_path = os.path.join(output_dir, 'original.pdf')
     if not os.path.exists(pdf_path):

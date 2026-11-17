@@ -7,6 +7,7 @@ from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
 from django.urls import reverse
 import pymupdf
+from PIL import Image
 
 from .autoplace import pdf_path_of
 from .converters import PAGE_DPI, image_on_white_page
@@ -48,6 +49,26 @@ def save_overlays(document, overlays):
     for page_number in overlays:
         with open(overlay_path(document, page_number), 'wb') as file:
             file.write(overlays[page_number])
+
+
+def is_empty_overlay(overlay):
+    image = Image.open(io.BytesIO(overlay))
+    image = image.convert('RGBA')
+    alpha = image.getchannel('A')
+    return alpha.getbbox() is None
+
+
+def has_signature(overlays):
+    for page_number in overlays:
+        if not is_empty_overlay(overlays[page_number]):
+            return True
+    return False
+
+
+def signed_file_name(document, finished):
+    if finished:
+        return document.filename + ' - signed.pdf'
+    return document.filename + '.pdf'
 
 
 def read_saved_overlays(document):
@@ -221,7 +242,7 @@ def send_signed_copy(document, signer):
         to=recipients,
     )
     email.content_subtype = 'html'
-    email.attach(f'{document.filename}.pdf', pdf, 'application/pdf')
+    email.attach(signed_file_name(document, finished), pdf, 'application/pdf')
     email.send()
 
 

@@ -11,8 +11,11 @@ TWO_WORD_LABELS = ['signed by', 'sign here', 'semnatura olografa', 'semnătura o
 FIELD_WORDS = ['data', 'date', 'nr', 'no', 'loc', 'place', 'stampila', 'ștampila', 'stamp', 'address', 'adresa', 'adresă', 'email', 'e-mail', 'telefon', 'phone', 'tel', 'cnp', 'iban', 'name', 'nume', 'numele', 'prenume', 'surname']
 MIN_LINE_UNDERSCORES = 3
 MAX_NAME_WORDS = 3
+MAX_LABEL_EXTRA_WORDS = 4
+SENTENCE_ENDINGS = '.!?'
 LINES_CHECKED_UNDER_LABEL = 4
 LINE_HEIGHTS_CHECKED_ABOVE_LABEL = 6
+LINE_HEIGHTS_TO_LINE_ABOVE = 3
 NAME_INTRODUCERS = ['prin', 'by', 'name', 'nume', 'numele']
 NAME_ENDINGS = ['–', '-', '—']
 COMPANY_TYPES = ['srl', 's.r.l', 'sa', 's.a', 'sc', 'ii', 'llc', 'ltd', 'inc', 'gmbh']
@@ -33,6 +36,7 @@ FRAME_PADDING_POINTS = 3
 MIN_ROOM_POINTS = 15
 MAX_BOX_HEIGHT_POINTS = 200
 PAGE_BACKGROUND_SHARE = 0.9
+MIN_TABLE_ROWS = 2
 SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
 
 
@@ -102,11 +106,11 @@ def read_signed_areas(page):
 
     for widget in page.widgets():
         if widget.field_type == pymupdf.PDF_WIDGET_TYPE_SIGNATURE and widget.is_signed:
-            signed_areas.append(box_of(widget.rect))
+            signed_areas.append(box_of(widget.rect * page.rotation_matrix))
 
     for annotation in page.annots():
         if annotation.type[0] in SIGNED_ANNOTATION_TYPES:
-            signed_areas.append(box_of(annotation.rect))
+            signed_areas.append(box_of(annotation.rect * page.rotation_matrix))
 
     return signed_areas
 
@@ -120,14 +124,14 @@ def make_segment(x0, y0, x1, y1):
     }
 
 
-def segments_of(item):
+def segments_of(item, rotation):
     if item[0] == 'l':
-        start = item[1]
-        end = item[2]
+        start = item[1] * rotation
+        end = item[2] * rotation
         return [make_segment(start.x, start.y, end.x, end.y)]
 
     if item[0] == 're':
-        rect = item[1]
+        rect = item[1] * rotation
         if rect.width <= THIN_LINE_POINTS or rect.height <= THIN_LINE_POINTS:
             return [make_segment(rect.x0, rect.y0, rect.x1, rect.y1)]
         top = make_segment(rect.x0, rect.y0, rect.x1, rect.y0)
@@ -165,9 +169,10 @@ def touches_vertical(line, vertical_lines):
 
 
 def covers_the_page(drawing, page):
-    if drawing['rect'].width < page.rect.width * PAGE_BACKGROUND_SHARE:
+    rect = drawing['rect'] * page.rotation_matrix
+    if rect.width < page.rect.width * PAGE_BACKGROUND_SHARE:
         return False
-    if drawing['rect'].height < page.rect.height * PAGE_BACKGROUND_SHARE:
+    if rect.height < page.rect.height * PAGE_BACKGROUND_SHARE:
         return False
     return True
 
@@ -180,7 +185,7 @@ def read_lines(page):
         if covers_the_page(drawing, page):
             continue
         for item in drawing['items']:
-            for segment in segments_of(item):
+            for segment in segments_of(item, page.rotation_matrix):
                 if segment['y1'] - segment['y0'] <= THIN_LINE_POINTS:
                     add_to_lines(horizontal_lines, segment)
                 elif segment['x1'] - segment['x0'] <= THIN_LINE_POINTS:
@@ -259,12 +264,13 @@ def read_words(pdf_path):
         for page in pdf:
             words = []
             for x0, y0, x1, y1, text, block, line, number in page.get_text('words'):
+                rect = pymupdf.Rect(x0, y0, x1, y1) * page.rotation_matrix
                 word = {
                     'text': text,
-                    'left': to_page_pixels(x0),
-                    'top': to_page_pixels(y0),
-                    'width': to_page_pixels(x1 - x0),
-                    'height': to_page_pixels(y1 - y0),
+                    'left': to_page_pixels(rect.x0),
+                    'top': to_page_pixels(rect.y0),
+                    'width': to_page_pixels(rect.width),
+                    'height': to_page_pixels(rect.height),
                     'block': block,
                     'line': line,
                 }
@@ -314,6 +320,44 @@ def join_two_word_labels(line):
         else:
             joined.append(word)
             position = position + 1
+    return joined
+
+
+def long_label_end(line, position):
+    if line[position]['text'].endswith(':'):
+        return None
+
+    last = position + MAX_LABEL_EXTRA_WORDS
+    for index in range(position + 1, len(line)):
+        if index > last:
+            return None
+        text = line[index]['text']
+        if is_line_placeholder(text) or is_signature_word(text):
+            return None
+        if text[-1] in SENTENCE_ENDINGS:
+            return None
+        if text.endswith(':'):
+            return index
+    return None
+
+
+def join_long_labels(line):
+    joined = []
+    position = 0
+    while position < len(line):
+        word = line[position]
+        end = None
+        if is_signature_word(word['text']):
+            end = long_label_end(line, position)
+
+        if end is None:
+            joined.append(word)
+            position = position + 1
+        else:
+            label = join_words(word, line[end])
+            label['text'] = word['text'] + ':'
+            joined.append(label)
+            position = end + 1
     return joined
 
 
@@ -379,7 +423,7 @@ def right_limit_of(line, position, page_width):
     return page_width - to_page_pixels(PAGE_MARGIN_POINTS)
 
 
-def signature_box(keyword, underline, right_limit):
+def signature_box(page, keyword, underline, right_limit):
     if underline is not None:
         return {
             'left': underline['left'],
@@ -395,7 +439,7 @@ def signature_box(keyword, underline, right_limit):
         width = right_limit - left
 
     if width < to_page_pixels(MIN_EMPTY_SPOT_WIDTH_POINTS):
-        return box_under_label(keyword, right_limit)
+        return box_under_label(page, keyword, right_limit)
 
     return {
         'left': left,
@@ -406,19 +450,33 @@ def signature_box(keyword, underline, right_limit):
     }
 
 
-def box_under_label(keyword, right_limit):
-    width = to_page_pixels(EMPTY_SPOT_WIDTH_POINTS)
-    if keyword['left'] + width > right_limit:
-        width = right_limit - keyword['left']
-    if width < keyword['width']:
-        width = keyword['width']
+def overlaps_a_word(page, box):
+    for word in page['words']:
+        if boxes_overlap(word, box):
+            return True
+    return False
 
-    return {
-        'left': keyword['left'],
+
+def box_under_label(page, keyword, right_limit):
+    width = to_page_pixels(EMPTY_SPOT_WIDTH_POINTS)
+    left = keyword['left']
+    if left + width > right_limit:
+        left = right_limit - width
+    if left < to_page_pixels(PAGE_MARGIN_POINTS):
+        left = to_page_pixels(PAGE_MARGIN_POINTS)
+        width = right_limit - left
+
+    box = {
+        'left': left,
         'top': keyword['top'] + keyword['height'] * 2,
         'width': width,
         'height': keyword['height'],
     }
+    for step in range(LINES_CHECKED_UNDER_LABEL):
+        if not overlaps_a_word(page, box):
+            break
+        box['top'] = box['top'] + keyword['height']
+    return box
 
 
 def space_above(page, box):
@@ -456,18 +514,29 @@ def is_already_signed(page, keyword, box):
     return False
 
 
-def column_of(line, position, page_width):
-    keyword = line[position]
-    start = 0
-    end = page_width
+def is_on_same_row(word, keyword):
+    word_middle = word['top'] + word['height'] / 2
+    keyword_middle = keyword['top'] + keyword['height'] / 2
+    return abs(word_middle - keyword_middle) < keyword['height'] / 2
 
-    for other in line[:position]:
-        if is_signature_word(other['text']):
-            start = (other['left'] + keyword['left']) / 2
-    for other in line[position + 1:]:
-        if is_signature_word(other['text']):
-            end = (keyword['left'] + other['left']) / 2
-            break
+
+def column_of(page, keyword):
+    start = 0
+    end = page['width']
+
+    for other in page['words']:
+        if other is keyword or not is_signature_word(other['text']):
+            continue
+        if not is_on_same_row(other, keyword):
+            continue
+        if other['left'] < keyword['left']:
+            middle = (other['left'] + keyword['left']) / 2
+            if middle > start:
+                start = middle
+        if other['left'] > keyword['left']:
+            middle = (keyword['left'] + other['left']) / 2
+            if middle < end:
+                end = middle
 
     return start, end
 
@@ -573,7 +642,7 @@ def role_in_line(words):
 
 
 def name_above(page, line, position):
-    column_start, column_end = column_of(line, position, page['width'])
+    column_start, column_end = column_of(page, line[position])
 
     frame = frame_around_word(page, line[position])
     if frame is not None:
@@ -600,6 +669,30 @@ def name_above(page, line, position):
             return name
 
     return ''
+
+
+def name_below(page, line, position):
+    keyword = line[position]
+    column_start, column_end = column_of(page, keyword)
+    keyword_bottom = keyword['top'] + keyword['height']
+    lowest_top = keyword_bottom + keyword['height'] * 2
+
+    lines = {}
+    for word in page['words']:
+        if word['top'] < keyword_bottom - keyword['height'] / 4 or word['top'] > lowest_top:
+            continue
+        if word['left'] < column_start or word['left'] >= column_end:
+            continue
+        key = (word['block'], word['line'])
+        if key not in lines:
+            lines[key] = []
+        lines[key].append(word)
+
+    below = list(lines.values())
+    below.sort(key=top_of_line)
+    if len(below) == 0:
+        return ''
+    return person_in_line(below[0])
 
 
 def name_after_slash(line, position):
@@ -642,6 +735,36 @@ def drawn_line_after(page, keyword, right_limit):
             'left': drawn['left'],
             'top': drawn['y'] - keyword['height'],
             'width': width,
+            'height': keyword['height'],
+        }
+    return None
+
+
+def line_above(page, keyword):
+    keyword_center = keyword['left'] + keyword['width'] / 2
+    latest_start = keyword['left'] + keyword['height']
+    highest = keyword['top'] - keyword['height'] * LINE_HEIGHTS_TO_LINE_ABOVE
+
+    for word in page['words']:
+        if word['text'].strip('_') != '' or not is_line_placeholder(word['text']):
+            continue
+        if word['top'] + word['height'] > keyword['top'] + keyword['height'] / 4:
+            continue
+        if word['top'] < highest:
+            continue
+        if word['left'] > latest_start or word['left'] + word['width'] < keyword_center:
+            continue
+        return underline_part_of(word)
+
+    for drawn in page['drawn_lines']:
+        if drawn['y'] > keyword['top'] or drawn['y'] < highest:
+            continue
+        if drawn['left'] > latest_start or drawn['left'] + drawn['width'] < keyword_center:
+            continue
+        return {
+            'left': drawn['left'],
+            'top': drawn['y'] - keyword['height'],
+            'width': drawn['width'],
             'height': keyword['height'],
         }
     return None
@@ -816,6 +939,7 @@ def room_under_label(page, keyword, frame):
 def build_spot(page, line, position, name):
     keyword = line[position]
     right_limit = right_limit_of(line, position, page['width'])
+    line_right_limit = right_limit
 
     frame = frame_around_word(page, keyword)
     if frame is not None and frame['right'] < right_limit:
@@ -826,14 +950,16 @@ def build_spot(page, line, position, name):
         underline = drawn_line_after(page, keyword, right_limit)
     if underline is None:
         underline = underline_below(page, keyword)
+    if underline is None:
+        underline = line_above(page, keyword)
 
     box = None
     if underline is None:
-        box = empty_box_next_to(page, keyword, right_limit)
+        box = empty_box_next_to(page, keyword, line_right_limit)
     if underline is None and box is None:
         box = room_under_label(page, keyword, frame)
     if box is None:
-        box = signature_box(keyword, underline, right_limit)
+        box = signature_box(page, keyword, underline, right_limit)
 
     if is_already_signed(page, keyword, box):
         return None
@@ -882,17 +1008,89 @@ def name_label_position(line):
     return None
 
 
+def empty_cells_below(page, keyword):
+    frame = frame_around_word(page, keyword)
+    if frame is None:
+        return []
+
+    middle_x = keyword['left'] + keyword['width'] / 2
+    gap = to_page_pixels(FRAME_GAP_POINTS)
+    cells = []
+    while True:
+        cell = frame_around(page, middle_x, frame['bottom'] + gap)
+        if cell is None or has_words_inside(page, cell):
+            break
+        if cell['top'] < frame['bottom'] - gap:
+            break
+        cells.append(cell)
+        frame = cell
+    return cells
+
+
+def row_of(page, cell):
+    groups = {}
+    for word in page['words']:
+        middle_y = word['top'] + word['height'] / 2
+        if middle_y < cell['top'] or middle_y > cell['bottom']:
+            continue
+        if word['left'] >= cell['left']:
+            continue
+        key = (word['block'], word['line'])
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(word)
+
+    row = list(groups.values())
+    row.sort(key=left_of_line)
+    return row
+
+
+def left_of_line(words):
+    return words[0]['left']
+
+
+def table_spots(page, keyword, cells):
+    spots = []
+    for cell in cells:
+        row = row_of(page, cell)
+        if len(row) == 0:
+            continue
+
+        name = ''
+        for words in row:
+            name = person_in_line(words)
+            if name != '':
+                break
+
+        spots.append({
+            'page_number': page['number'],
+            'keyword': keyword,
+            'name': name,
+            'underline': None,
+            'box': box_in_frame(cell['left'], cell['right'], cell['top'], cell['bottom']),
+        })
+    return spots
+
+
 def find_signature_spots(page):
     spots = []
 
     for line in lines_of(page):
         line = join_two_word_labels(line)
+        line = join_long_labels(line)
 
         for position in range(len(line)):
             if not is_signature_word(line[position]['text']):
                 continue
+            if line[position]['text'].endswith(','):
+                continue
 
             if is_followed_by_text(line, position):
+                continue
+
+            cells = empty_cells_below(page, line[position])
+            if len(cells) >= MIN_TABLE_ROWS:
+                spots.extend(table_spots(page, line[position], cells))
                 continue
 
             name_words = name_before(line, position)
@@ -906,6 +1104,8 @@ def find_signature_spots(page):
                 name = name_after_slash(line, position)
             if name == '':
                 name = name_above(page, line, position)
+            if name == '':
+                name = name_below(page, line, position)
 
             spot = build_spot(page, line, position, name)
             if spot is not None:
