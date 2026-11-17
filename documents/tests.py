@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -22,7 +23,7 @@ from .autoplace import (
     read_words,
     to_page_pixels,
 )
-from .models import Document, Page, Placeholder, Signer, document_upload_path
+from .models import AuditEvent, Document, Page, Placeholder, Signer, document_upload_path
 from .signing import add_overlay, color_of, from_address, sign_link, write_signature
 from .views import is_valid_email
 
@@ -274,6 +275,33 @@ class EditorTests(SignElectricTestCase):
         response = self.client.get(f'/editor/{document.uid}/', follow=True)
 
         self.assertContains(response, 'Your document expired')
+
+    def test_editor_knows_my_full_name(self):
+        self.user.first_name = 'Ion'
+        self.user.last_name = 'Pop'
+        self.user.save()
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/')
+
+        self.assertContains(response, '"my_name": "Ion Pop"')
+
+    def test_editor_title_is_the_document_name(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/')
+
+        self.assertContains(response, '<title>Sign contract</title>', html=True)
+
+    def test_editor_uses_the_username_without_a_name(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/')
+
+        self.assertContains(response, '"my_name": "boss"')
 
     def test_pdf_shows_the_auto_place_button(self):
         self.upload(make_pdf())
@@ -569,7 +597,8 @@ class ExportTests(SignElectricTestCase):
         })
 
         signed = pymupdf.open(stream=response.content, filetype='pdf')
-        self.assertEqual(signed.page_count, 3)
+        self.assertEqual(signed.page_count, 4)
+        self.assertIn('Signing record', signed[3].get_text())
 
     def test_export_of_an_image(self):
         self.upload(make_png())
@@ -578,7 +607,7 @@ class ExportTests(SignElectricTestCase):
         response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay(page.width, page.height)})
 
         signed = pymupdf.open(stream=response.content, filetype='pdf')
-        self.assertEqual(signed.page_count, 1)
+        self.assertEqual(signed.page_count, 2)
         self.assertAlmostEqual(signed[0].rect.width, to_points(page.width), delta=1)
 
     def test_export_without_overlay_is_rejected(self):
@@ -1117,6 +1146,176 @@ class DashboardFilterTests(SignElectricTestCase):
         self.assertContains(response, 'No documents match your search.')
 
 
+class RequireLoginTests(SignElectricTestCase):
+    def setUp(self):
+        super().setUp()
+        self.upload(make_png(), 'multi')
+        self.client.post(self.editor_url('send'), {
+            'placeholders': json.dumps([placeholder('Ana', 'ana@example.com')]),
+            'page_1': make_jpeg(),
+            'overlay_1': make_overlay(),
+            'require_login': 'yes',
+        })
+        self.document = Document.objects.get()
+        self.signer = Signer.objects.get()
+        self.link = f'/sign/{self.signer.token}/'
+
+    def test_option_is_saved_and_shown(self):
+        self.assertTrue(self.document.require_login)
+        self.assertIn('log in with ana@example.com', mail.outbox[0].body)
+
+        response = self.client.get(f'/documents/{self.document.uid}/')
+        self.assertContains(response, 'Signers must log in with their email to sign.')
+
+    def test_without_the_option_anyone_with_the_link_can_sign(self):
+        self.upload(make_png(), 'multi')
+        self.client.post(self.editor_url('send'), {
+            'placeholders': json.dumps([placeholder('Dan', 'dan@example.com')]),
+            'page_1': make_jpeg(),
+            'overlay_1': make_overlay(),
+        })
+        dan = Signer.objects.get(email='dan@example.com')
+
+        self.assertFalse(dan.document.require_login)
+        response = self.client_class().get(f'/sign/{dan.token}/')
+        self.assertContains(response, 'asks you to sign')
+
+    def test_logged_out_visitor_is_sent_to_log_in(self):
+        response = self.client_class().get(self.link)
+
+        self.assertRedirects(response, f'/login/?next={self.link}', fetch_redirect_response=False)
+        response = self.client_class().post(self.link)
+        self.assertIsNone(Signer.objects.get().signed_at)
+        response = self.client_class().get(self.link + 'page/1/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_other_account_cannot_sign(self):
+        other = User.objects.create_user('maria', 'maria@example.com', 'a-long-password-123')
+        self.client.force_login(other)
+
+        response = self.client.post(self.link)
+
+        self.assertContains(response, 'This document is for someone else')
+        self.assertIsNone(Signer.objects.get().signed_at)
+
+    def test_the_right_account_can_sign(self):
+        ana = User.objects.create_user('ana', 'Ana@Example.com', 'a-long-password-123')
+        self.client.force_login(ana)
+
+        response = self.client.get(self.link)
+        self.assertContains(response, 'asks you to sign')
+        response = self.client.get(self.link + 'page/1/')
+        self.assertEqual(response.status_code, 200)
+
+        self.client.post(self.link)
+        self.assertIsNotNone(Signer.objects.get().signed_at)
+
+
+class AuditTrailTests(SignElectricTestCase):
+    def record_text(self, pdf_bytes):
+        signed = pymupdf.open(stream=pdf_bytes, filetype='pdf')
+        return signed[signed.page_count - 1].get_text()
+
+    def test_upload_saves_the_fingerprint_and_an_event(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        with open(document.file.path, 'rb') as file:
+            expected = hashlib.sha256(file.read()).hexdigest()
+        self.assertEqual(document.original_hash, expected)
+        self.assertEqual(document.events.get().text, 'Uploaded by boss (boss@example.com)')
+        self.assertEqual(document.events.get().ip, '127.0.0.1')
+
+    def test_solo_pdf_ends_with_the_signing_record(self):
+        self.user.first_name = 'Ion'
+        self.user.last_name = 'Ștefănescu'
+        self.user.save()
+        self.upload(make_png())
+
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
+
+        text = self.record_text(response.content)
+        document = Document.objects.get()
+        self.assertIn('Signing record', text)
+        self.assertIn(str(document.uid), text)
+        self.assertIn(document.original_hash, text)
+        self.assertIn('Signed by Ion Ștefănescu (boss@example.com)', text)
+        self.assertIn('127.0.0.1', text)
+
+    def test_multiple_signing_history(self):
+        self.send([
+            placeholder('Ana', 'ana@example.com'),
+            placeholder('Dan', 'dan@example.com'),
+        ])
+        document = Document.objects.get()
+        ana = Signer.objects.get(email='ana@example.com')
+        dan = Signer.objects.get(email='dan@example.com')
+        ana_browser = self.client_class()
+        ana_browser.get(f'/sign/{ana.token}/')
+        ana_browser.get(f'/sign/{ana.token}/')
+        ana_browser.post(f'/sign/{ana.token}/')
+        self.client.post(f'/documents/{document.uid}/remind/')
+        self.client_class().post(f'/sign/{dan.token}/')
+
+        texts = []
+        for event in document.events.order_by('created_at', 'id'):
+            texts.append(event.text)
+        self.assertEqual(texts, [
+            'Uploaded by boss (boss@example.com)',
+            'Sent for signing by boss (boss@example.com) to Ana (ana@example.com), Dan (dan@example.com)',
+            'Opened by Ana (ana@example.com)',
+            'Signed by Ana (ana@example.com)',
+            'Reminder sent to 1 person who did not sign yet',
+            'Signed by Dan (dan@example.com)',
+            'Signed by everyone',
+        ])
+
+        response = self.client.get(f'/documents/{document.uid}/pdf/')
+        text = self.record_text(b''.join(response.streaming_content))
+        self.assertIn('Signed by everyone', text)
+        self.assertIn('ana@example.com', text)
+
+    def test_emailed_copy_has_the_record(self):
+        self.send([placeholder('Ana', 'ana@example.com')])
+        ana = Signer.objects.get()
+        mail.outbox = []
+
+        self.client_class().post(f'/sign/{ana.token}/')
+
+        text = self.record_text(mail.outbox[0].attachments[0].content)
+        self.assertIn('Signed by Ana (ana@example.com)', text)
+
+    def test_cancel_is_recorded(self):
+        self.send([placeholder('Ana', 'ana@example.com')])
+        document = Document.objects.get()
+
+        self.client.post(f'/documents/{document.uid}/cancel/')
+
+        self.assertTrue(document.events.filter(text='Cancelled by boss (boss@example.com)').exists())
+
+    def test_failed_email_does_not_keep_the_signed_event(self):
+        self.send([placeholder('Ana', 'ana@example.com')])
+        ana = Signer.objects.get()
+
+        with patch('documents.views.send_signed_copy', side_effect=OSError):
+            self.client_class().post(f'/sign/{ana.token}/')
+
+        document = Document.objects.get()
+        self.assertFalse(document.events.filter(text__startswith='Signed by Ana').exists())
+
+    def test_long_history_goes_on_more_pages(self):
+        self.upload(make_png())
+        document = Document.objects.get()
+        for number in range(30):
+            AuditEvent.objects.create(document=document, text=f'Event number {number}')
+
+        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
+
+        signed = pymupdf.open(stream=response.content, filetype='pdf')
+        self.assertEqual(signed.page_count, 3)
+        self.assertIn('Event number 29', signed[2].get_text())
+
+
 class UnitTests(TestCase):
     def test_upload_path_uses_the_uid_and_a_lowercase_extension(self):
         document = Document()
@@ -1439,6 +1638,21 @@ class AutoPlaceTests(SignElectricTestCase):
         page = read_first_page([], drawn=[(40, 600, 560, 600)])
 
         self.assertEqual(find_lone_drawn_lines(page), [])
+
+    def test_page_background_is_not_a_box(self):
+        page = read_first_page([(72, 85, 'Signature:')], rects=[(0, 0, 595.5, 842.25)])
+
+        box = find_signature_spots(page)[0]['box']
+
+        self.assertLess(box['top'], to_page_pixels(85))
+        self.assertGreater(box['left'], to_page_pixels(72))
+
+    def test_page_border_is_not_a_box(self):
+        page = read_first_page([(72, 85, 'Signature:')], rects=[(20, 20, 575, 822)])
+
+        box = find_signature_spots(page)[0]['box']
+
+        self.assertLess(box['top'], to_page_pixels(85))
 
     def test_empty_box_after_the_label(self):
         page = read_first_page([(72, 600, 'Signature:')], rects=[(140, 580, 300, 620)])

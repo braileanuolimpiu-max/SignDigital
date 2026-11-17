@@ -145,6 +145,11 @@
             padding: 10px 14px;
             font-size: 14px;
         }
+        .note {
+            margin: -6px 0 10px;
+            font-size: 12px;
+            color: #6b7280;
+        }
         .remind {
             margin: 14px 0 0;
         }
@@ -481,6 +486,9 @@
             {% if document.mode == 'multi' %}
             <div class="card signers-card">
                 <h2>Signers</h2>
+                {% if document.require_login %}
+                <p class="note">Signers must log in with their email to sign.</p>
+                {% endif %}
                 <div class="signers-list">
                     {% for signer in signers %}
                     <div class="signer">

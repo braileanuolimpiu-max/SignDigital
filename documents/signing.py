@@ -14,6 +14,10 @@ from .converters import PAGE_DPI, image_on_white_page
 SIGNATURE_FONT_FILE = os.path.join(settings.BASE_DIR, 'documents', 'fonts', 'MrDeHaviland-Regular.ttf')
 SIGNATURE_FONT_NAME = 'signature'
 POINTS_PER_INCH = 72
+RECORD_PAGE_WIDTH = 595
+RECORD_PAGE_HEIGHT = 842
+RECORD_MARGIN = 40
+EVENTS_PER_RECORD_PAGE = 22
 
 
 def image_to_pdf(image_path):
@@ -92,6 +96,36 @@ def write_signature(pdf_page, placeholder, page):
     )
 
 
+def add_signing_record(pdf, document):
+    events = list(document.events.order_by('created_at', 'id'))
+
+    groups = []
+    for start in range(0, len(events), EVENTS_PER_RECORD_PAGE):
+        groups.append(events[start:start + EVENTS_PER_RECORD_PAGE])
+    if len(groups) == 0:
+        groups.append([])
+
+    for index in range(len(groups)):
+        context = {
+            'document': document,
+            'signers': document.signers.order_by('id'),
+            'events': groups[index],
+            'first_page': index == 0,
+            'page_number': index + 1,
+            'page_count': len(groups),
+        }
+        html = render_to_string('pdf/signing_record.html', context)
+
+        page = pdf.new_page(width=RECORD_PAGE_WIDTH, height=RECORD_PAGE_HEIGHT)
+        area = pymupdf.Rect(
+            RECORD_MARGIN,
+            RECORD_MARGIN,
+            RECORD_PAGE_WIDTH - RECORD_MARGIN,
+            RECORD_PAGE_HEIGHT - RECORD_MARGIN,
+        )
+        page.insert_htmlbox(area, html)
+
+
 def build_signed_pdf(document, overlays):
     pdf = open_original_pdf(document)
 
@@ -107,6 +141,8 @@ def build_signed_pdf(document, overlays):
         )
         for placeholder in signed_placeholders:
             write_signature(pdf_page, placeholder, page)
+
+    add_signing_record(pdf, document)
 
     data = pdf.tobytes(garbage=3, deflate=True)
     pdf.close()

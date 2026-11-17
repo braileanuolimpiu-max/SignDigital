@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Spațiu de Semnare</title>
+    <title>Sign {{ editor_data.filename }}</title>
     <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
     <style>
         html, body {
@@ -274,6 +274,23 @@
             text-transform: uppercase;
             color: #9ca3af;
         }
+        .check-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: normal;
+            letter-spacing: normal;
+            text-transform: none;
+            color: #374151;
+            cursor: pointer;
+        }
+        dialog .check-label input {
+            display: inline;
+            width: auto;
+            margin: 0;
+        }
         .dialog-text {
             margin: 0 0 12px;
             font-size: 14px;
@@ -398,6 +415,10 @@
     <dialog id="SendDialog">
         <h3>Send for signing</h3>
         <p class="dialog-text">Each person gets an email with a link to sign. You will get the signed copies at {{ user.email }}.</p>
+        <label class="check-label">
+            <input type="checkbox" id="RequireLogin">
+            Signers must log in with their email to sign
+        </label>
         <p class="dialog-error" id="SendError"></p>
         <div class="dialog-buttons">
             <button type="button" onclick="CloseSendDialog()">Cancel</button>
@@ -592,7 +613,7 @@
     function newSignatureText(pageCanvas, left, top, label) {
         textCounter = textCounter + 1;
         if (label === '') {
-            label = 'Semnatura ' + textCounter;
+            label = 'Signature ' + textCounter;
         }
 
         const text = new fabric.IText(label, {
@@ -944,7 +965,11 @@
         if (editorData.mode === 'multi') {
             object = newPlaceholder(pageCanvas, left, lineBottom, spot.name);
         } else {
-            object = newSignatureText(pageCanvas, left, lineBottom, spot.name);
+            let name = spot.name;
+            if (name === '') {
+                name = editorData.my_name;
+            }
+            object = newSignatureText(pageCanvas, left, lineBottom, name);
         }
         fitInBox(object, box);
         if (box.next_to_text) {
@@ -1072,6 +1097,9 @@
 
         const form = new FormData();
         form.append('placeholders', JSON.stringify(placeholderData()));
+        if (document.getElementById('RequireLogin').checked) {
+            form.append('require_login', 'yes');
+        }
         for (let index = 0; index < pageCanvases.length; index++) {
             const image = await pageImageWithoutPlaceholders(pageCanvases[index]);
             form.append('page_' + (index + 1), image, 'page.jpg');

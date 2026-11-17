@@ -13,6 +13,7 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
 from .forms import ResendConfirmationForm, SignupForm
+from .models import email_sent_recently, remember_sent_email
 
 EMAIL_FAILED_MESSAGE = 'The confirmation email could not be sent. Try again later.'
 
@@ -63,6 +64,7 @@ def signup(request):
 
             try:
                 send_confirmation_email(user)
+                remember_sent_email(user.email, 'confirm')
                 return show_message(
                     request,
                     'Check your email',
@@ -114,9 +116,10 @@ def resend_confirmation(request):
             email = form.cleaned_data['email']
             user = User.objects.filter(email__iexact=email, is_active=False, last_login__isnull=True).first()
 
-            if user is not None:
+            if user is not None and not email_sent_recently(email, 'confirm'):
                 try:
                     send_confirmation_email(user)
+                    remember_sent_email(email, 'confirm')
                 except (smtplib.SMTPException, OSError):
                     form.add_error(None, EMAIL_FAILED_MESSAGE)
 

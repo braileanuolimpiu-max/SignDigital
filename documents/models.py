@@ -41,6 +41,8 @@ class Document(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     reminded_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    require_login = models.BooleanField(default=False)
+    original_hash = models.CharField(max_length=64, blank=True)
 
     def __str__(self):
         return self.filename
@@ -82,6 +84,13 @@ class Document(models.Model):
         if self.sent_at is not None:
             return 'waiting'
         return 'draft'
+
+
+class AuditEvent(models.Model):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='events')
+    text = models.CharField(max_length=1000)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class Page(models.Model):

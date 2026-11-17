@@ -27,3 +27,24 @@ def remember_wrong_try(username):
 
 def forget_wrong_tries(username):
     LoginAttempt.objects.filter(username=username).delete()
+
+
+EMAIL_AGAIN_AFTER = timedelta(minutes=5)
+
+
+class SentEmail(models.Model):
+    email = models.EmailField()
+    kind = models.CharField(max_length=20)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+def email_sent_recently(email, kind):
+    since = timezone.now() - EMAIL_AGAIN_AFTER
+    return SentEmail.objects.filter(email=email.lower(), kind=kind, created_at__gte=since).exists()
+
+
+def remember_sent_email(email, kind):
+    SentEmail.objects.create(email=email.lower(), kind=kind)
+
+    too_old = timezone.now() - EMAIL_AGAIN_AFTER
+    SentEmail.objects.filter(created_at__lt=too_old).delete()

@@ -32,6 +32,7 @@ FRAME_GAP_POINTS = 3
 FRAME_PADDING_POINTS = 3
 MIN_ROOM_POINTS = 15
 MAX_BOX_HEIGHT_POINTS = 200
+PAGE_BACKGROUND_SHARE = 0.9
 SIGNED_ANNOTATION_TYPES = [pymupdf.PDF_ANNOT_STAMP, pymupdf.PDF_ANNOT_INK]
 
 
@@ -163,11 +164,21 @@ def touches_vertical(line, vertical_lines):
     return False
 
 
+def covers_the_page(drawing, page):
+    if drawing['rect'].width < page.rect.width * PAGE_BACKGROUND_SHARE:
+        return False
+    if drawing['rect'].height < page.rect.height * PAGE_BACKGROUND_SHARE:
+        return False
+    return True
+
+
 def read_lines(page):
     horizontal_lines = []
     vertical_lines = []
 
     for drawing in page.get_drawings():
+        if covers_the_page(drawing, page):
+            continue
         for item in drawing['items']:
             for segment in segments_of(item):
                 if segment['y1'] - segment['y0'] <= THIN_LINE_POINTS:

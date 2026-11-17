@@ -19,7 +19,13 @@ image, sign it yourself, or send it to other people to sign by email.
   who is still waiting, and the PDF with the signatures so far to view or download
 - **Sent to me**: documents other people asked you to sign, found by your confirmed email,
   even ones sent before you had an account. Open them, see who signed, sign or download
-- **Forgot password**: a link by email to choose a new password
+- **Forgot password**: a link by email to choose a new password. Confirmation and password
+  emails go to the same address at most once every 5 minutes
+- **Your name as the signature**: sign up asks for your first and last name, and Auto Place
+  writes it when you sign a document yourself
+- **Signing record**: every PDF ends with a page that lists the document ID, a SHA-256
+  fingerprint of the original file, the signers and the full history (uploaded, sent,
+  opened, signed, reminded, cancelled) with the time and IP address of each step
 - **Login limit**: after 5 wrong passwords, that username is locked for 15 minutes
 - **Cancel and delete**: cancel a document that is still waiting (its signing links stop
   working), or delete a document and its files for good
@@ -27,6 +33,8 @@ image, sign it yourself, or send it to other people to sign by email.
   cancelled ones
 - **Private files**: uploaded files and page images are never public; only the owner, or a
   signer through their own link, can open them
+- **Signers must log in (optional)**: when sending, tick "Signers must log in with their
+  email to sign", so a forwarded link is useless without that person's account
 - **Reminders**: one button emails everyone who has not signed yet (at most once per hour)
 - Uploads you never sign or send are deleted after 24 hours
 

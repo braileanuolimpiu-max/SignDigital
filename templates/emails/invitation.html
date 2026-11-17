@@ -10,6 +10,9 @@
             {{ document.sender_email }} asks you to sign <strong>{{ document.filename }}</strong>.
             {% endif %}
             Your name will be placed in {{ placeholder_count }} place{{ placeholder_count|pluralize }}.
+            {% if document.require_login %}
+            To sign, log in with {{ signer.email }}, or create a free account with this email.
+            {% endif %}
         </p>
         <div style="text-align: center;">
             <a href="{{ link }}" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 6px; font-size: 15px;">

@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -6,6 +7,7 @@ from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
@@ -18,7 +20,7 @@ from django.views.decorators.clickjacking import xframe_options_sameorigin
 from .autoplace import analyze_document, can_autoplace
 from .converters import PAGE_DPI, ConversionError, build_pages
 from .forms import DocumentForm
-from .models import Document, Placeholder, Signer, delete_old_drafts
+from .models import AuditEvent, Document, Placeholder, Signer, delete_old_drafts
 from .signing import (
     build_signed_pdf,
     read_saved_overlays,
@@ -43,6 +45,21 @@ def get_editable_document(request, uid):
         return None
 
     return Document.objects.filter(uid=uid, owner=request.user, sent_at__isnull=True).first()
+
+
+def person_text(user):
+    name = user.get_full_name()
+    if name == '':
+        name = user.username
+    return f'{name} ({user.email})'
+
+
+def add_event(request, document, text):
+    return AuditEvent.objects.create(
+        document=document,
+        text=text,
+        ip=request.META.get('REMOTE_ADDR'),
+    )
 
 
 def get_my_signer(request, document):
@@ -72,6 +89,14 @@ def matches_filters(document, search, status):
         return False
 
     return True
+
+
+def signer_is_allowed(request, signer):
+    if not signer.document.require_login:
+        return True
+    if not request.user.is_authenticated:
+        return False
+    return request.user.email.lower() == signer.email.lower()
 
 
 def is_valid_email(text):
@@ -107,6 +132,9 @@ def homepage(request):
                 messages.error(request, str(error))
                 return redirect('homepage')
 
+            document.original_hash = hashlib.sha256(read_file(document.file.path)).hexdigest()
+            document.save()
+            add_event(request, document, 'Uploaded by ' + person_text(request.user))
             return redirect('signature_workspace', uid=document.uid)
     else:
         form = DocumentForm()
@@ -177,7 +205,12 @@ def signature_workspace(request, uid):
         url = reverse('editor_page_image', args=[document.uid, page.number])
         pages.append({'url': url, 'width': page.width, 'height': page.height})
 
+    my_name = request.user.get_full_name()
+    if my_name == '':
+        my_name = request.user.username
+
     editor_data = {
+        'my_name': my_name,
         'filename': document.filename,
         'dpi': PAGE_DPI,
         'mode': document.mode,
@@ -359,7 +392,15 @@ def send_for_signing(request, uid):
             signer_count = create_signers(document, placeholders)
             document.sender_email = sender_email
             document.sent_at = timezone.now()
+            document.require_login = request.POST.get('require_login') == 'yes'
             document.save()
+
+            signer_texts = []
+            for signer in document.signers.order_by('id'):
+                signer_texts.append(f'{signer.name} ({signer.email})')
+            text = 'Sent for signing by ' + person_text(request.user) + ' to ' + ', '.join(signer_texts)
+            add_event(request, document, text)
+
             send_invitations(document)
     except (smtplib.SMTPException, OSError):
         return JsonResponse({'error': EMAIL_FAILED_MESSAGE}, status=500)
@@ -388,6 +429,7 @@ def export_signed(request, uid):
     if document.mode == 'solo':
         document.finished_at = timezone.now()
         document.save()
+        add_event(request, document, 'Signed by ' + person_text(request.user))
 
     pdf = build_signed_pdf(document, overlays)
     return HttpResponse(pdf, content_type='application/pdf')
@@ -422,6 +464,15 @@ def sign_document(request, token):
             'The sender cancelled it, so it cannot be signed anymore.',
         )
 
+    if not signer_is_allowed(request, signer):
+        if not request.user.is_authenticated:
+            return redirect_to_login(request.get_full_path())
+        return show_finished(
+            request,
+            'This document is for someone else',
+            f'Only the account with the email {signer.email} can sign it. Log out and log in with that account.',
+        )
+
     if signer.signed_at is not None:
         return show_finished(
             request,
@@ -432,17 +483,20 @@ def sign_document(request, token):
     if request.method == 'POST':
         signer.signed_at = timezone.now()
         signer.save()
+        event = add_event(request, document, f'Signed by {signer.name} ({signer.email})')
 
         try:
             send_signed_copy(document, signer)
         except (smtplib.SMTPException, OSError):
             signer.signed_at = None
             signer.save()
+            event.delete()
             return show_finished(request, 'Something went wrong', EMAIL_FAILED_MESSAGE)
 
         if document.everyone_signed():
             document.finished_at = timezone.now()
             document.save()
+            add_event(request, document, 'Signed by everyone')
 
         return show_finished(
             request,
@@ -476,6 +530,10 @@ def sign_document(request, token):
             })
         url = reverse('sign_page_image', args=[signer.token, page.number])
         pages.append({'url': url, 'boxes': boxes})
+
+    opened_text = f'Opened by {signer.name} ({signer.email})'
+    if not document.events.filter(text=opened_text).exists():
+        add_event(request, document, opened_text)
 
     context = {
         'document': document,
@@ -551,6 +609,10 @@ def send_reminder(request, uid):
 
     document.reminded_at = timezone.now()
     document.save()
+    if count == 1:
+        add_event(request, document, 'Reminder sent to 1 person who did not sign yet')
+    else:
+        add_event(request, document, f'Reminder sent to {count} people who did not sign yet')
 
     if count == 1:
         messages.success(request, 'A reminder was sent to 1 person.')
@@ -591,6 +653,8 @@ def sign_page_image(request, token, number):
     signer = get_object_or_404(Signer, token=token)
     if signer.document.status == 'cancelled':
         raise Http404('Document cancelled')
+    if not signer_is_allowed(request, signer):
+        raise Http404('Not allowed')
     return page_image_response(signer.document, number)
 
 
@@ -607,6 +671,7 @@ def cancel_document(request, uid):
 
     document.cancelled_at = timezone.now()
     document.save()
+    add_event(request, document, 'Cancelled by ' + person_text(request.user))
     messages.success(request, 'The document was cancelled. Its signing links do not work anymore.')
     return redirect('document_detail', uid=uid)
 

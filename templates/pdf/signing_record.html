@@ -1,0 +1,90 @@
+<style>
+    body {
+        font-family: monospace;
+        font-size: 8pt;
+        color: #374151;
+    }
+    h1 {
+        font-size: 15pt;
+        color: #111827;
+        margin: 0 0 4pt 0;
+    }
+    h2 {
+        font-size: 11pt;
+        color: #111827;
+        margin: 14pt 0 4pt 0;
+    }
+    p {
+        margin: 0 0 3pt 0;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    th {
+        text-align: left;
+        font-size: 8pt;
+        color: #6b7280;
+        border-bottom: 1px solid #d1d5db;
+        padding: 3pt 4pt;
+    }
+    td {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 3pt 4pt;
+        vertical-align: top;
+    }
+    .small {
+        font-size: 7.5pt;
+        color: #6b7280;
+    }
+</style>
+
+<h1>Signing record</h1>
+<p class="small">Page {{ page_number }} of {{ page_count }} of the signing record. All times are in UTC.</p>
+
+{% if first_page %}
+<h2>Document</h2>
+<p><b>Name:</b> {{ document.filename }}</p>
+<p><b>Document ID:</b> {{ document.uid }}</p>
+{% if document.original_hash %}
+<p><b>Fingerprint of the original file (SHA-256):</b></p>
+<p class="small">{{ document.original_hash }}</p>
+{% endif %}
+<p><b>Owner:</b> {% if document.owner %}{{ document.owner.get_full_name|default:document.owner.username }} ({{ document.owner.email }}){% endif %}</p>
+<p><b>Uploaded:</b> {{ document.created_at|date:"j M Y, H:i:s" }}</p>
+{% if document.status == 'signed' %}
+<p><b>Status:</b> Signed on {{ document.finished_at|date:"j M Y, H:i:s" }}</p>
+{% elif document.status == 'cancelled' %}
+<p><b>Status:</b> Cancelled on {{ document.cancelled_at|date:"j M Y, H:i:s" }}</p>
+{% elif document.status == 'waiting' %}
+<p><b>Status:</b> Waiting for signatures</p>
+{% endif %}
+
+{% if signers %}
+<h2>Signers</h2>
+<table>
+    <tr><th>Name</th><th>Email</th><th>Signed</th></tr>
+    {% for signer in signers %}
+    <tr>
+        <td>{{ signer.name }}</td>
+        <td>{{ signer.email }}</td>
+        <td>{% if signer.signed_at %}{{ signer.signed_at|date:"j M Y, H:i:s" }}{% else %}Not signed{% endif %}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+{% endif %}
+
+{% if events %}
+<h2>History</h2>
+<table>
+    <tr><th>Time</th><th>What happened</th><th>IP address</th></tr>
+    {% for event in events %}
+    <tr>
+        <td>{{ event.created_at|date:"j M Y, H:i:s" }}</td>
+        <td>{{ event.text }}</td>
+        <td>{{ event.ip|default:"" }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}

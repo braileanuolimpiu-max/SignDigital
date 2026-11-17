@@ -9,7 +9,7 @@ from django.core import mail
 from django.test import TestCase
 from django.utils import timezone
 
-from accounts.models import LoginAttempt
+from accounts.models import LoginAttempt, SentEmail
 
 from documents.models import Document
 from documents.tests import make_jpeg, make_overlay, make_png, placeholder
@@ -27,6 +27,8 @@ class SignupTests(TestCase):
     def test_signup_creates_an_account_that_waits_for_the_email(self):
         response = self.client.post('/signup/', {
             'username': 'ion',
+            'first_name': 'Ion',
+            'last_name': 'Pop',
             'email': 'Ion@Example.com',
             'password1': PASSWORD,
             'password2': PASSWORD,
@@ -43,11 +45,29 @@ class SignupTests(TestCase):
         response = self.client.get('/')
         self.assertRedirects(response, '/login/?next=/')
 
+    def test_signup_saves_the_full_name(self):
+        sign_up(self.client)
+
+        self.assertEqual(User.objects.get().get_full_name(), 'Ion Pop')
+
+    def test_signup_needs_the_name(self):
+        response = self.client.post('/signup/', {
+            'username': 'ion',
+            'email': 'ion@example.com',
+            'password1': PASSWORD,
+            'password2': PASSWORD,
+        })
+
+        self.assertContains(response, 'First name')
+        self.assertEqual(User.objects.count(), 0)
+
     def test_email_can_be_used_only_once(self):
         User.objects.create_user('ion', 'ion@example.com', PASSWORD)
 
         response = self.client.post('/signup/', {
             'username': 'maria',
+            'first_name': 'Maria',
+            'last_name': 'Stan',
             'email': 'ION@example.com',
             'password1': PASSWORD,
             'password2': PASSWORD,
@@ -59,6 +79,8 @@ class SignupTests(TestCase):
     def test_weak_password_is_rejected(self):
         response = self.client.post('/signup/', {
             'username': 'ion',
+            'first_name': 'Ion',
+            'last_name': 'Pop',
             'email': 'ion@example.com',
             'password1': '123',
             'password2': '123',
@@ -71,6 +93,8 @@ class SignupTests(TestCase):
 def sign_up(client, username='ion', email='ion@example.com'):
     return client.post('/signup/', {
         'username': username,
+        'first_name': 'Ion',
+        'last_name': 'Pop',
         'email': email,
         'password1': PASSWORD,
         'password2': PASSWORD,
@@ -136,6 +160,7 @@ class EmailConfirmationTests(TestCase):
 
     def test_resend_sends_a_new_link_that_works(self):
         sign_up(self.client)
+        SentEmail.objects.update(created_at=timezone.now() - timedelta(minutes=6))
         mail.outbox = []
 
         response = self.client.post('/resend-confirmation/', {'email': 'ION@example.com'})
@@ -144,6 +169,15 @@ class EmailConfirmationTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.client.get(confirmation_link(mail.outbox[0]))
         self.assertTrue(User.objects.get().is_active)
+
+    def test_resend_right_after_signup_sends_nothing(self):
+        sign_up(self.client)
+        mail.outbox = []
+
+        response = self.client.post('/resend-confirmation/', {'email': 'ion@example.com'})
+
+        self.assertContains(response, 'Check your email')
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_resend_to_unknown_email_says_the_same_and_sends_nothing(self):
         response = self.client.post('/resend-confirmation/', {'email': 'nobody@example.com'})
@@ -225,6 +259,21 @@ class PasswordResetTests(TestCase):
         response = self.client.get(link, follow=True)
 
         self.assertContains(response, 'This link does not work.')
+
+    def test_second_reset_within_five_minutes_sends_nothing(self):
+        self.client.post('/forgot-password/', {'email': 'ion@example.com'})
+        response = self.client.post('/forgot-password/', {'email': 'ION@example.com'}, follow=True)
+
+        self.assertContains(response, 'Check your email')
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_reset_can_be_asked_again_after_five_minutes(self):
+        self.client.post('/forgot-password/', {'email': 'ion@example.com'})
+        SentEmail.objects.update(created_at=timezone.now() - timedelta(minutes=6))
+
+        self.client.post('/forgot-password/', {'email': 'ion@example.com'})
+
+        self.assertEqual(len(mail.outbox), 2)
 
     def test_unknown_email_says_the_same_and_sends_nothing(self):
         response = self.client.post('/forgot-password/', {'email': 'nobody@example.com'}, follow=True)

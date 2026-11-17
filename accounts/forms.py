@@ -1,16 +1,24 @@
 from django import forms
-from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, UserCreationForm
 from django.contrib.auth.models import User
 
-from .models import forget_wrong_tries, remember_wrong_try, too_many_wrong_tries
+from .models import (
+    email_sent_recently,
+    forget_wrong_tries,
+    remember_sent_email,
+    remember_wrong_try,
+    too_many_wrong_tries,
+)
 
 
 class SignupForm(UserCreationForm):
+    first_name = forms.CharField(max_length=150, label='First name')
+    last_name = forms.CharField(max_length=150, label='Last name')
     email = forms.EmailField()
 
     class Meta:
         model = User
-        fields = ['username', 'email']
+        fields = ['username', 'first_name', 'last_name', 'email']
 
     def clean_email(self):
         email = self.cleaned_data['email']
@@ -55,3 +63,12 @@ class LoginForm(AuthenticationForm):
 
 class ResendConfirmationForm(forms.Form):
     email = forms.EmailField()
+
+
+class LimitedPasswordResetForm(PasswordResetForm):
+    def get_users(self, email):
+        if email_sent_recently(email, 'reset'):
+            return []
+
+        remember_sent_email(email, 'reset')
+        return super().get_users(email)
