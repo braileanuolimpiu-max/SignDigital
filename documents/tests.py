@@ -818,6 +818,305 @@ class ReminderTests(SignElectricTestCase):
         self.assertEqual(response.status_code, 405)
 
 
+class SentToMeTests(SignElectricTestCase):
+    def setUp(self):
+        super().setUp()
+        self.send([
+            placeholder('Ana', 'ana@example.com'),
+            placeholder('Dan', 'dan@example.com'),
+        ])
+        self.document = Document.objects.get()
+        self.ana = User.objects.create_user('ana', 'Ana@Example.com', 'a-long-password-123')
+        self.client.force_login(self.ana)
+
+    def test_document_sent_before_the_account_is_shown(self):
+        response = self.client.get('/?show=received')
+
+        self.assertContains(response, 'photo')
+        self.assertContains(response, 'From boss@example.com')
+        self.assertContains(response, 'Waiting for you')
+        self.assertContains(response, '<span class="count">1</span>', html=True)
+
+    def test_my_documents_tab_does_not_show_it(self):
+        response = self.client.get('/')
+
+        self.assertContains(response, 'You have no signed or sent documents yet.')
+
+    def test_signer_can_open_the_document_and_sign(self):
+        signer = Signer.objects.get(email='ana@example.com')
+
+        response = self.client.get(f'/documents/{self.document.uid}/')
+
+        self.assertContains(response, 'Sent by boss@example.com')
+        self.assertContains(response, f'/sign/{signer.token}/')
+        self.assertNotContains(response, 'Send reminder')
+
+    def test_after_signing_it_says_you_signed(self):
+        signer = Signer.objects.get(email='ana@example.com')
+        response = self.client.post(f'/sign/{signer.token}/')
+        self.assertContains(response, 'Back to my documents')
+
+        response = self.client.get('/?show=received')
+        self.assertContains(response, 'You signed')
+        self.assertContains(response, '1 of 2 signed')
+
+        response = self.client.get(f'/documents/{self.document.uid}/')
+        self.assertNotContains(response, 'Sign now')
+
+    def test_signer_can_get_the_pdf(self):
+        response = self.client.get(f'/documents/{self.document.uid}/pdf/')
+
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+
+    def test_signer_cannot_send_a_reminder(self):
+        mail.outbox = []
+
+        response = self.client.post(f'/documents/{self.document.uid}/remind/')
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_other_people_cannot_see_it(self):
+        stranger = User.objects.create_user('maria', 'maria@example.com', 'a-long-password-123')
+        self.client.force_login(stranger)
+
+        response = self.client.get('/?show=received')
+        self.assertContains(response, 'Nobody has sent you a document to sign yet.')
+
+        response = self.client.get(f'/documents/{self.document.uid}/')
+        self.assertEqual(response.status_code, 404)
+
+        response = self.client.get(f'/documents/{self.document.uid}/pdf/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_account_without_email_sees_nothing(self):
+        nobody = User.objects.create_user('nobody', '', 'a-long-password-123')
+        self.client.force_login(nobody)
+
+        response = self.client.get('/?show=received')
+
+        self.assertContains(response, 'Nobody has sent you a document to sign yet.')
+
+
+class FileAccessTests(SignElectricTestCase):
+    def test_owner_gets_the_page_image_and_the_original(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/page/1/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'image/jpeg')
+
+        response = self.client.get(f'/editor/{document.uid}/original/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('contract.pdf', response['Content-Disposition'])
+
+    def test_editor_uses_the_protected_addresses(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/')
+
+        self.assertContains(response, f'/editor/{document.uid}/page/1/')
+        self.assertContains(response, f'/editor/{document.uid}/original/')
+        self.assertNotContains(response, '/media/')
+
+    def test_missing_page_is_not_found(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get(f'/editor/{document.uid}/page/99/')
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_other_user_and_logged_out_get_nothing(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+        other = User.objects.create_user('maria', 'maria@example.com', 'a-long-password-123')
+        self.client.force_login(other)
+
+        response = self.client.get(f'/editor/{document.uid}/page/1/')
+        self.assertEqual(response.status_code, 404)
+        response = self.client.get(f'/editor/{document.uid}/original/')
+        self.assertEqual(response.status_code, 404)
+
+        self.client.logout()
+        response = self.client.get(f'/editor/{document.uid}/page/1/')
+        self.assertEqual(response.status_code, 302)
+
+    def test_media_folder_is_not_public(self):
+        self.upload(make_pdf())
+        document = Document.objects.get()
+
+        response = self.client.get('/media/documents/' + str(document.uid) + '/original.pdf')
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_signer_gets_the_page_image_by_token(self):
+        self.send([placeholder('Ana', 'ana@example.com')])
+        signer = Signer.objects.get()
+
+        response = self.client_class().get(f'/sign/{signer.token}/')
+        self.assertContains(response, f'/sign/{signer.token}/page/1/')
+
+        response = self.client_class().get(f'/sign/{signer.token}/page/1/')
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client_class().get(f'/sign/{uuid.uuid4()}/page/1/')
+        self.assertEqual(response.status_code, 404)
+
+
+class CancelAndDeleteTests(SignElectricTestCase):
+    def setUp(self):
+        super().setUp()
+        self.send([
+            placeholder('Ana', 'ana@example.com'),
+            placeholder('Dan', 'dan@example.com'),
+        ])
+        self.document = Document.objects.get()
+        self.ana = Signer.objects.get(email='ana@example.com')
+        self.dan = Signer.objects.get(email='dan@example.com')
+        self.client_class().post(f'/sign/{self.ana.token}/')
+
+    def cancel(self):
+        return self.client.post(f'/documents/{self.document.uid}/cancel/', follow=True)
+
+    def test_owner_sees_cancel_and_delete(self):
+        response = self.client.get(f'/documents/{self.document.uid}/')
+
+        self.assertContains(response, 'Cancel signing')
+        self.assertContains(response, 'Delete document')
+
+    def test_cancel_stops_the_signing_links(self):
+        response = self.cancel()
+
+        self.assertContains(response, 'The document was cancelled.')
+        self.assertContains(response, '1 of 2 people had signed.')
+        self.assertNotContains(response, 'Send reminder')
+        self.assertEqual(Document.objects.get().status, 'cancelled')
+
+        response = self.client_class().get(f'/sign/{self.dan.token}/')
+        self.assertContains(response, 'This document was cancelled')
+        response = self.client_class().post(f'/sign/{self.dan.token}/')
+        self.assertContains(response, 'This document was cancelled')
+        self.assertIsNone(Signer.objects.get(email='dan@example.com').signed_at)
+
+        response = self.client_class().get(f'/sign/{self.dan.token}/page/1/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_cancelled_document_shows_in_the_dashboard(self):
+        self.cancel()
+
+        response = self.client.get('/')
+
+        self.assertContains(response, '<span class="badge cancelled">Cancelled</span>', html=True)
+
+    def test_cancelled_document_cannot_get_a_reminder(self):
+        self.cancel()
+        mail.outbox = []
+
+        response = self.client.post(f'/documents/{self.document.uid}/remind/', follow=True)
+
+        self.assertContains(response, 'This document is not waiting for anyone to sign.')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_finished_document_cannot_be_cancelled(self):
+        self.client_class().post(f'/sign/{self.dan.token}/')
+
+        response = self.cancel()
+
+        self.assertContains(response, 'Only a document that is waiting for signatures can be cancelled.')
+        self.assertEqual(Document.objects.get().status, 'signed')
+
+    def test_delete_removes_the_document_and_its_files(self):
+        folder = self.document.folder_path
+
+        response = self.client.post(f'/documents/{self.document.uid}/delete/', follow=True)
+
+        self.assertRedirects(response, '/')
+        self.assertContains(response, '&quot;photo&quot; was deleted.')
+        self.assertEqual(Document.objects.count(), 0)
+        self.assertFalse(os.path.exists(folder))
+
+        response = self.client_class().get(f'/sign/{self.dan.token}/')
+        self.assertContains(response, 'This link is no longer active')
+
+    def test_locked_files_show_an_error(self):
+        with patch('shutil.rmtree', side_effect=PermissionError):
+            response = self.client.post(f'/documents/{self.document.uid}/delete/', follow=True)
+
+        self.assertContains(response, 'could not be deleted right now')
+        self.assertEqual(Document.objects.count(), 1)
+
+    def test_signer_cannot_cancel_or_delete(self):
+        ana_user = User.objects.create_user('ana', 'ana@example.com', 'a-long-password-123')
+        self.client.force_login(ana_user)
+
+        response = self.client.get(f'/documents/{self.document.uid}/')
+        self.assertNotContains(response, 'Cancel signing')
+        self.assertNotContains(response, 'Delete document')
+
+        response = self.client.post(f'/documents/{self.document.uid}/cancel/')
+        self.assertEqual(response.status_code, 404)
+        response = self.client.post(f'/documents/{self.document.uid}/delete/')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(Document.objects.get().status, 'waiting')
+
+    def test_signer_sees_cancelled_without_sign_now(self):
+        self.cancel()
+        dan_user = User.objects.create_user('dan', 'dan@example.com', 'a-long-password-123')
+        self.client.force_login(dan_user)
+
+        response = self.client.get('/?show=received')
+        self.assertContains(response, '<span class="badge cancelled">Cancelled</span>', html=True)
+        self.assertNotContains(response, '<span class="count">')
+
+        response = self.client.get(f'/documents/{self.document.uid}/')
+        self.assertNotContains(response, 'Sign now')
+
+    def test_only_post_is_allowed(self):
+        response = self.client.get(f'/documents/{self.document.uid}/cancel/')
+        self.assertEqual(response.status_code, 405)
+        response = self.client.get(f'/documents/{self.document.uid}/delete/')
+        self.assertEqual(response.status_code, 405)
+
+
+class DashboardFilterTests(SignElectricTestCase):
+    def setUp(self):
+        super().setUp()
+        self.upload(SimpleUploadedFile('Rental agreement.pdf', make_text_pdf([(72, 100, 'Rent')])))
+        self.client.post(self.editor_url('export'), {'overlay_1': make_overlay(600, 800)})
+        self.send([placeholder('Ana', 'ana@example.com')])
+
+    def test_search_by_name(self):
+        response = self.client.get('/?search=rental')
+
+        self.assertContains(response, '<div class="name">Rental agreement</div>', html=True)
+        self.assertNotContains(response, '<div class="name">photo</div>', html=True)
+
+    def test_filter_by_status(self):
+        response = self.client.get('/?status=waiting')
+
+        self.assertContains(response, '<div class="name">photo</div>', html=True)
+        self.assertNotContains(response, '<div class="name">Rental agreement</div>', html=True)
+
+    def test_nothing_found(self):
+        response = self.client.get('/?search=invoice')
+
+        self.assertContains(response, 'No documents match your search.')
+        self.assertContains(response, 'Clear')
+
+    def test_search_in_sent_to_me_by_sender(self):
+        ana = User.objects.create_user('ana', 'ana@example.com', 'a-long-password-123')
+        self.client.force_login(ana)
+
+        response = self.client.get('/?show=received&search=boss')
+        self.assertContains(response, '<div class="name">photo</div>', html=True)
+
+        response = self.client.get('/?show=received&search=nobody')
+        self.assertContains(response, 'No documents match your search.')
+
+
 class UnitTests(TestCase):
     def test_upload_path_uses_the_uid_and_a_lowercase_extension(self):
         document = Document()

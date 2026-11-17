@@ -17,6 +17,16 @@ image, sign it yourself, or send it to other people to sign by email.
   link without an account
 - **My documents**: every document you signed or sent, how many people signed so far,
   who is still waiting, and the PDF with the signatures so far to view or download
+- **Sent to me**: documents other people asked you to sign, found by your confirmed email,
+  even ones sent before you had an account. Open them, see who signed, sign or download
+- **Forgot password**: a link by email to choose a new password
+- **Login limit**: after 5 wrong passwords, that username is locked for 15 minutes
+- **Cancel and delete**: cancel a document that is still waiting (its signing links stop
+  working), or delete a document and its files for good
+- **Search and filters**: find documents by name or sender, and show only waiting, signed or
+  cancelled ones
+- **Private files**: uploaded files and page images are never public; only the owner, or a
+  signer through their own link, can open them
 - **Reminders**: one button emails everyone who has not signed yet (at most once per hour)
 - Uploads you never sign or send are deleted after 24 hours
 
@@ -143,8 +153,20 @@ Without email settings, emails are printed in the terminal. To send real emails 
 python manage.py test documents
 ```
 
-## Note
+## Running it for other people
 
-This project ships with Django's development configuration (`DEBUG = True` and a
-throwaway `SECRET_KEY`). Set a real secret key and disable debug before deploying
-anywhere public.
+Out of the box the project runs in development mode. Before other people use it, add these
+lines to `config/local_settings.py` (next to the email settings):
+
+```python
+SECRET_KEY = 'a long random text that nobody else knows'
+DEBUG = False
+```
+
+- Make a secret key with
+  `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"`.
+  With `DEBUG = False` the server refuses to start while the default key is still in use.
+- Only the addresses `localhost`, `127.0.0.1` and the one in `SITE_URL` are accepted. To
+  accept more, add `EXTRA_ALLOWED_HOSTS = ['sign.example.com']`.
+- When the site runs behind HTTPS, add `USE_HTTPS = True`. Cookies are then sent only over
+  HTTPS and every `http://` address is sent to `https://`.

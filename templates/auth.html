@@ -118,6 +118,7 @@
     <div class="card">
         <h2>{{ title }}</h2>
 
+        {% if form %}
         <form method="post">
             {% csrf_token %}
             {{ form.non_field_errors }}
@@ -139,8 +140,15 @@
 
             <button type="submit">{{ button }}</button>
         </form>
+        {% else %}
+        <p class="other">This link does not work. It was already used or it expired.</p>
+        <p class="other"><a href="{% url 'password_reset' %}">Ask for a new link</a></p>
+        {% endif %}
 
         <p class="other">{{ other_text }} <a href="{% url other_link %}">{{ other_link_text }}</a></p>
+        {% if show_forgot %}
+        <p class="other"><a href="{% url 'password_reset' %}">Forgot your password?</a></p>
+        {% endif %}
         {% if show_resend %}
         <p class="other"><a href="{% url 'resend_confirmation' %}">Did not get the confirmation email?</a></p>
         {% endif %}

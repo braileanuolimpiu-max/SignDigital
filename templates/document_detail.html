@@ -139,6 +139,12 @@
             color: #b45309;
             font-size: 12px;
         }
+        .sign-now {
+            display: block;
+            margin-top: 14px;
+            padding: 10px 14px;
+            font-size: 14px;
+        }
         .remind {
             margin: 14px 0 0;
         }
@@ -174,6 +180,40 @@
             background: #fef2f2;
             color: #b91c1c;
         }
+        .status.cancelled {
+            color: #b91c1c;
+        }
+        .actions {
+            flex: none;
+            display: flex;
+            gap: 8px;
+            padding: 14px 20px;
+        }
+        .actions form {
+            flex: 1;
+            margin: 0;
+        }
+        .actions button {
+            width: 100%;
+            font: inherit;
+            font-size: 13px;
+            padding: 8px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .actions button:hover {
+            background: #f3f4f6;
+        }
+        .actions button.danger {
+            border-color: #fecaca;
+            color: #b91c1c;
+        }
+        .actions button.danger:hover {
+            background: #fef2f2;
+        }
         .viewer-area {
             flex: 1;
             min-width: 0;
@@ -203,7 +243,13 @@
             .side {
                 width: auto;
             }
-            .remind {
+            .sign-now {
+            display: block;
+            margin-top: 14px;
+            padding: 10px 14px;
+            font-size: 14px;
+        }
+        .remind {
             margin: 14px 0 0;
         }
         .remind button {
@@ -237,6 +283,40 @@
         .message.error {
             background: #fef2f2;
             color: #b91c1c;
+        }
+        .status.cancelled {
+            color: #b91c1c;
+        }
+        .actions {
+            flex: none;
+            display: flex;
+            gap: 8px;
+            padding: 14px 20px;
+        }
+        .actions form {
+            flex: 1;
+            margin: 0;
+        }
+        .actions button {
+            width: 100%;
+            font: inherit;
+            font-size: 13px;
+            padding: 8px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .actions button:hover {
+            background: #f3f4f6;
+        }
+        .actions button.danger {
+            border-color: #fecaca;
+            color: #b91c1c;
+        }
+        .actions button.danger:hover {
+            background: #fef2f2;
         }
         .viewer-area {
                 height: 80vh;
@@ -257,7 +337,13 @@
             .content {
                 padding: 12px;
             }
-            .remind {
+            .sign-now {
+            display: block;
+            margin-top: 14px;
+            padding: 10px 14px;
+            font-size: 14px;
+        }
+        .remind {
             margin: 14px 0 0;
         }
         .remind button {
@@ -292,6 +378,40 @@
             background: #fef2f2;
             color: #b91c1c;
         }
+        .status.cancelled {
+            color: #b91c1c;
+        }
+        .actions {
+            flex: none;
+            display: flex;
+            gap: 8px;
+            padding: 14px 20px;
+        }
+        .actions form {
+            flex: 1;
+            margin: 0;
+        }
+        .actions button {
+            width: 100%;
+            font: inherit;
+            font-size: 13px;
+            padding: 8px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            cursor: pointer;
+        }
+        .actions button:hover {
+            background: #f3f4f6;
+        }
+        .actions button.danger {
+            border-color: #fecaca;
+            color: #b91c1c;
+        }
+        .actions button.danger:hover {
+            background: #fef2f2;
+        }
         .viewer-area {
                 display: none;
             }
@@ -310,7 +430,7 @@
     <div class="top-bar">
         <h1>{{ document.filename }}</h1>
         <div class="right">
-            <a class="button" href="{% url 'homepage' %}">Back to my documents</a>
+            <a class="button" href="{{ back_url }}">Back to my documents</a>
             <a class="button primary" href="{% url 'document_pdf' document.uid %}?download=1">Download PDF</a>
         </div>
     </div>
@@ -325,16 +445,25 @@
 
             <div class="card">
                 {% if document.mode == 'multi' %}
+                {% if is_owner %}
                 <h2>Multiple signing</h2>
+                {% else %}
+                <h2>Sent by {{ document.sender_email }}</h2>
+                {% endif %}
                 {% if document.status == 'signed' %}
                 <p class="status">Signed by everyone on {{ document.finished_at|date:"j M Y, H:i" }}.</p>
+                {% elif document.status == 'cancelled' %}
+                <p class="status cancelled">Cancelled on {{ document.cancelled_at|date:"j M Y, H:i" }}. {{ signed }} of {{ total }} people had signed.</p>
                 {% else %}
                 <p class="status">{{ signed }} of {{ total }} people signed. Sent on {{ document.sent_at|date:"j M Y, H:i" }}.</p>
                 {% endif %}
                 <div class="progress">
                     <div style="width: {% widthratio signed total 100 %}%;"></div>
                 </div>
-                {% if document.status == 'waiting' %}
+                {% if my_signer and not my_signer.signed_at and document.status == 'waiting' %}
+                <a class="button primary sign-now" href="{% url 'sign_document' my_signer.token %}">Sign now</a>
+                {% endif %}
+                {% if is_owner and document.status == 'waiting' %}
                 <form method="post" action="{% url 'send_reminder' document.uid %}" class="remind">
                     {% csrf_token %}
                     <button type="submit">Send reminder</button>
@@ -361,12 +490,31 @@
                         </div>
                         {% if signer.signed_at %}
                         <span class="signed">Signed<br>{{ signer.signed_at|date:"j M Y, H:i" }}</span>
+                        {% elif document.status == 'cancelled' %}
+                        <span class="waiting">Did not sign</span>
                         {% else %}
                         <span class="waiting">Waiting</span>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
+            </div>
+            {% endif %}
+
+            {% if is_owner %}
+            <div class="card actions">
+                {% if document.status == 'waiting' %}
+                <form method="post" action="{% url 'cancel_document' document.uid %}"
+                      onsubmit="return confirm('Cancel this document? The signing links will stop working.');">
+                    {% csrf_token %}
+                    <button type="submit">Cancel signing</button>
+                </form>
+                {% endif %}
+                <form method="post" action="{% url 'delete_document' document.uid %}"
+                      onsubmit="return confirm('Delete this document for good? This cannot be undone.');">
+                    {% csrf_token %}
+                    <button type="submit" class="danger">Delete document</button>
+                </form>
             </div>
             {% endif %}
 

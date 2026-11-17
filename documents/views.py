@@ -9,7 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.http import FileResponse, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -43,6 +43,35 @@ def get_editable_document(request, uid):
         return None
 
     return Document.objects.filter(uid=uid, owner=request.user, sent_at__isnull=True).first()
+
+
+def get_my_signer(request, document):
+    if request.user.email == '':
+        return None
+    return document.signers.filter(email__iexact=request.user.email).first()
+
+
+def get_visible_document(request, uid):
+    document = get_object_or_404(Document, uid=uid)
+
+    if document.owner == request.user:
+        return document
+    if get_my_signer(request, document) is not None:
+        return document
+
+    raise Http404('Document not found')
+
+
+def matches_filters(document, search, status):
+    if search != '':
+        text = document.filename + ' ' + document.sender_email
+        if search.lower() not in text.lower():
+            return False
+
+    if status != '' and document.status != status:
+        return False
+
+    return True
 
 
 def is_valid_email(text):
@@ -82,9 +111,16 @@ def homepage(request):
     else:
         form = DocumentForm()
 
+    search = request.GET.get('search', '')
+    search = search.strip()
+    status = request.GET.get('status', '')
+    filtering = search != '' or status != ''
+
     rows = []
     for document in request.user.documents.order_by('-created_at'):
         if document.status == 'draft':
+            continue
+        if not matches_filters(document, search, status):
             continue
 
         rows.append({
@@ -93,9 +129,36 @@ def homepage(request):
             'total': document.signer_count(),
         })
 
+    received = []
+    waiting_for_me = 0
+    if request.user.email != '':
+        my_signers = Signer.objects.filter(email__iexact=request.user.email)
+        for signer in my_signers.order_by('-document__sent_at'):
+            if signer.signed_at is None and signer.document.status == 'waiting':
+                waiting_for_me = waiting_for_me + 1
+            if not matches_filters(signer.document, search, status):
+                continue
+
+            received.append({
+                'document': signer.document,
+                'signer': signer,
+                'signed': signer.document.signed_count(),
+                'total': signer.document.signer_count(),
+            })
+
+    show = request.GET.get('show')
+    if show != 'received':
+        show = 'mine'
+
     context = {
         'form': form,
         'rows': rows,
+        'received': received,
+        'waiting_for_me': waiting_for_me,
+        'show': show,
+        'search': search,
+        'status': status,
+        'filtering': filtering,
     }
     return render(request, 'dashboard.html', context)
 
@@ -111,7 +174,8 @@ def signature_workspace(request, uid):
 
     pages = []
     for page in document.pages.all():
-        pages.append({'url': page.image.url, 'width': page.width, 'height': page.height})
+        url = reverse('editor_page_image', args=[document.uid, page.number])
+        pages.append({'url': url, 'width': page.width, 'height': page.height})
 
     editor_data = {
         'filename': document.filename,
@@ -121,7 +185,7 @@ def signature_workspace(request, uid):
     }
     context = {
         'uid': document.uid,
-        'original_url': document.file.url,
+        'original_url': reverse('editor_original', args=[document.uid]),
         'mode': document.mode,
         'can_autoplace': can_autoplace(document),
         'editor_data': editor_data,
@@ -330,7 +394,14 @@ def export_signed(request, uid):
 
 
 def show_finished(request, title, message):
-    return render(request, 'sign_finished.html', {'title': title, 'message': message})
+    context = {
+        'title': title,
+        'message': message,
+    }
+    if request.user.is_authenticated:
+        context['link'] = reverse('homepage') + '?show=received'
+        context['link_text'] = 'Back to my documents'
+    return render(request, 'sign_finished.html', context)
 
 
 def sign_document(request, token):
@@ -339,10 +410,17 @@ def sign_document(request, token):
         return show_finished(
             request,
             'This link is no longer active',
-            'The document was already signed by everyone, or it expired.',
+            'The document was deleted by the sender, or the link is wrong.',
         )
 
     document = signer.document
+
+    if document.status == 'cancelled':
+        return show_finished(
+            request,
+            'This document was cancelled',
+            'The sender cancelled it, so it cannot be signed anymore.',
+        )
 
     if signer.signed_at is not None:
         return show_finished(
@@ -396,7 +474,8 @@ def sign_document(request, token):
                 'height': placeholder.height / page.height * 100,
                 'font_size': placeholder.font_size / page.width * 100,
             })
-        pages.append({'url': page.image.url, 'boxes': boxes})
+        url = reverse('sign_page_image', args=[signer.token, page.number])
+        pages.append({'url': url, 'boxes': boxes})
 
     context = {
         'document': document,
@@ -408,12 +487,21 @@ def sign_document(request, token):
 
 @login_required
 def document_detail(request, uid):
-    document = get_object_or_404(Document, uid=uid, owner=request.user)
+    document = get_visible_document(request, uid)
     if document.status == 'draft':
         return redirect('homepage')
 
+    is_owner = document.owner == request.user
+    if is_owner:
+        back_url = reverse('homepage')
+    else:
+        back_url = reverse('homepage') + '?show=received'
+
     context = {
         'document': document,
+        'is_owner': is_owner,
+        'my_signer': get_my_signer(request, document),
+        'back_url': back_url,
         'signers': document.signers.order_by('id'),
         'signed': document.signed_count(),
         'total': document.signer_count(),
@@ -424,7 +512,7 @@ def document_detail(request, uid):
 @login_required
 @xframe_options_sameorigin
 def document_pdf(request, uid):
-    document = get_object_or_404(Document, uid=uid, owner=request.user)
+    document = get_visible_document(request, uid)
     if document.status == 'draft':
         return redirect('homepage')
 
@@ -469,3 +557,73 @@ def send_reminder(request, uid):
     else:
         messages.success(request, f'A reminder was sent to {count} people.')
     return redirect('document_detail', uid=uid)
+
+
+def read_file(path):
+    with open(path, 'rb') as file:
+        return file.read()
+
+
+def page_image_response(document, number):
+    page = document.pages.filter(number=number).first()
+    if page is None:
+        raise Http404('Page not found')
+    return HttpResponse(read_file(page.image.path), content_type='image/jpeg')
+
+
+@login_required
+def editor_page_image(request, uid, number):
+    document = get_object_or_404(Document, uid=uid, owner=request.user)
+    return page_image_response(document, number)
+
+
+@login_required
+def editor_original(request, uid):
+    document = get_object_or_404(Document, uid=uid, owner=request.user)
+    name, extension = os.path.splitext(document.file.name)
+    return FileResponse(
+        io.BytesIO(read_file(document.file.path)),
+        filename=document.filename + extension,
+    )
+
+
+def sign_page_image(request, token, number):
+    signer = get_object_or_404(Signer, token=token)
+    if signer.document.status == 'cancelled':
+        raise Http404('Document cancelled')
+    return page_image_response(signer.document, number)
+
+
+@login_required
+def cancel_document(request, uid):
+    if request.method != 'POST':
+        return HttpResponse(status=405)
+
+    document = get_object_or_404(Document, uid=uid, owner=request.user)
+
+    if document.status != 'waiting':
+        messages.error(request, 'Only a document that is waiting for signatures can be cancelled.')
+        return redirect('document_detail', uid=uid)
+
+    document.cancelled_at = timezone.now()
+    document.save()
+    messages.success(request, 'The document was cancelled. Its signing links do not work anymore.')
+    return redirect('document_detail', uid=uid)
+
+
+@login_required
+def delete_document(request, uid):
+    if request.method != 'POST':
+        return HttpResponse(status=405)
+
+    document = get_object_or_404(Document, uid=uid, owner=request.user)
+    filename = document.filename
+
+    try:
+        document.delete_with_files()
+    except OSError:
+        messages.error(request, 'The document could not be deleted right now. Try again in a minute.')
+        return redirect('document_detail', uid=uid)
+
+    messages.success(request, f'"{filename}" was deleted.')
+    return redirect('homepage')

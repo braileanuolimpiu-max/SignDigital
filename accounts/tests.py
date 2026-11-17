@@ -1,10 +1,15 @@
 import json
 import re
+from datetime import timedelta
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
 from django.test import TestCase
+from django.utils import timezone
+
+from accounts.models import LoginAttempt
 
 from documents.models import Document
 from documents.tests import make_jpeg, make_overlay, make_png, placeholder
@@ -170,6 +175,72 @@ class EmailConfirmationTests(TestCase):
         self.assertEqual(User.objects.count(), 0)
 
 
+def reset_link(email):
+    found = re.search(r'/reset/[^/]+/[^/]+/', email.body)
+    return found.group(0)
+
+
+class PasswordResetTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user('ion', 'ion@example.com', PASSWORD)
+
+    def test_login_page_links_to_forgot_password(self):
+        response = self.client.get('/login/')
+
+        self.assertContains(response, '/forgot-password/')
+
+    def test_reset_link_lets_you_choose_a_new_password(self):
+        response = self.client.post('/forgot-password/', {'email': 'ion@example.com'}, follow=True)
+        self.assertContains(response, 'Check your email')
+        self.assertEqual(len(mail.outbox), 1)
+
+        response = self.client.get(reset_link(mail.outbox[0]), follow=True)
+        self.assertContains(response, 'Choose a new password')
+        form_url = response.redirect_chain[-1][0]
+
+        response = self.client.post(form_url, {
+            'new_password1': 'a-brand-new-password-456',
+            'new_password2': 'a-brand-new-password-456',
+        }, follow=True)
+        self.assertContains(response, 'Your password was changed')
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('a-brand-new-password-456'))
+
+    def test_reset_link_uses_the_site_address(self):
+        self.client.post('/forgot-password/', {'email': 'ion@example.com'})
+
+        self.assertIn(settings.SITE_URL + '/reset/', mail.outbox[0].body)
+
+    def test_reset_link_works_only_once(self):
+        self.client.post('/forgot-password/', {'email': 'ion@example.com'})
+        link = reset_link(mail.outbox[0])
+        response = self.client.get(link, follow=True)
+        form_url = response.redirect_chain[-1][0]
+        self.client.post(form_url, {
+            'new_password1': 'a-brand-new-password-456',
+            'new_password2': 'a-brand-new-password-456',
+        })
+
+        response = self.client.get(link, follow=True)
+
+        self.assertContains(response, 'This link does not work.')
+
+    def test_unknown_email_says_the_same_and_sends_nothing(self):
+        response = self.client.post('/forgot-password/', {'email': 'nobody@example.com'}, follow=True)
+
+        self.assertContains(response, 'Check your email')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_unconfirmed_account_gets_no_reset_email(self):
+        self.user.is_active = False
+        self.user.save()
+
+        self.client.post('/forgot-password/', {'email': 'ion@example.com'})
+
+        self.assertEqual(len(mail.outbox), 0)
+
+
 class LoginTests(TestCase):
     def setUp(self):
         User.objects.create_user('ion', 'ion@example.com', PASSWORD)
@@ -209,6 +280,57 @@ class LoginTests(TestCase):
         self.assertRedirects(response, '/login/')
         response = self.client.get('/')
         self.assertRedirects(response, '/login/?next=/')
+
+
+class LoginLimitTests(TestCase):
+    def setUp(self):
+        User.objects.create_user('ion', 'ion@example.com', PASSWORD)
+
+    def wrong_tries(self, count):
+        for number in range(count):
+            self.client.post('/login/', {'username': 'ion', 'password': 'wrong'})
+
+    def test_four_wrong_tries_still_let_you_in(self):
+        self.wrong_tries(4)
+
+        response = self.client.post('/login/', {'username': 'ion', 'password': PASSWORD})
+
+        self.assertRedirects(response, '/')
+
+    def test_five_wrong_tries_lock_the_username(self):
+        self.wrong_tries(5)
+
+        response = self.client.post('/login/', {'username': 'ion', 'password': PASSWORD})
+
+        self.assertContains(response, 'Too many wrong tries.')
+        response = self.client.get('/')
+        self.assertRedirects(response, '/login/?next=/')
+
+    def test_lock_ends_after_fifteen_minutes(self):
+        self.wrong_tries(5)
+        LoginAttempt.objects.update(created_at=timezone.now() - timedelta(minutes=16))
+
+        response = self.client.post('/login/', {'username': 'ion', 'password': PASSWORD})
+
+        self.assertRedirects(response, '/')
+
+    def test_good_login_clears_the_wrong_tries(self):
+        self.wrong_tries(4)
+        self.client.post('/login/', {'username': 'ion', 'password': PASSWORD})
+        self.client.post('/logout/')
+
+        self.wrong_tries(4)
+        response = self.client.post('/login/', {'username': 'ion', 'password': PASSWORD})
+
+        self.assertRedirects(response, '/')
+
+    def test_capital_letters_count_as_the_same_username(self):
+        for number in range(5):
+            self.client.post('/login/', {'username': 'ION', 'password': 'wrong'})
+
+        response = self.client.post('/login/', {'username': 'ion', 'password': PASSWORD})
+
+        self.assertContains(response, 'Too many wrong tries.')
 
 
 class DocumentOwnerTests(TestCase):

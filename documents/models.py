@@ -40,6 +40,7 @@ class Document(models.Model):
     sent_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     reminded_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.filename
@@ -76,6 +77,8 @@ class Document(models.Model):
     def status(self):
         if self.finished_at is not None:
             return 'signed'
+        if self.cancelled_at is not None:
+            return 'cancelled'
         if self.sent_at is not None:
             return 'waiting'
         return 'draft'

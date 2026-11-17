@@ -10,7 +10,12 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 from pathlib import Path
+from urllib.parse import urlparse
+
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -24,7 +29,8 @@ SECRET_KEY = 'django-insecure-ku^_d16j=mft3uojtriv-bok#igq_@=zn0*um9)ljqlp-wsy^x
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+EXTRA_ALLOWED_HOSTS = []
+USE_HTTPS = False
 
 
 # Application definition
@@ -128,8 +134,6 @@ STATIC_URL = 'static/'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-import os
-MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 if os.name == 'nt':
     POPPLER_PATH = os.path.join(
@@ -148,7 +152,18 @@ GMAIL_ADDRESS = ''
 GMAIL_APP_PASSWORD = ''
 
 if os.path.exists(os.path.join(BASE_DIR, 'config', 'local_settings.py')):
-    from .local_settings import SITE_URL, GMAIL_ADDRESS, GMAIL_APP_PASSWORD
+    from .local_settings import *
+
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', urlparse(SITE_URL).hostname] + EXTRA_ALLOWED_HOSTS
+
+if not DEBUG and SECRET_KEY.startswith('django-insecure'):
+    raise ImproperlyConfigured('Set your own SECRET_KEY in config/local_settings.py before turning DEBUG off.')
+
+if USE_HTTPS:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30
 
 if GMAIL_ADDRESS:
     DEFAULT_FROM_EMAIL = GMAIL_ADDRESS
