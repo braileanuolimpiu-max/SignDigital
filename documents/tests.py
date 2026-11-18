@@ -599,8 +599,7 @@ class ExportTests(SignElectricTestCase):
         })
 
         signed = pymupdf.open(stream=response.content, filetype='pdf')
-        self.assertEqual(signed.page_count, 4)
-        self.assertIn('Signing record', signed[3].get_text())
+        self.assertEqual(signed.page_count, 3)
 
     def test_export_of_an_image(self):
         self.upload(make_png())
@@ -609,7 +608,7 @@ class ExportTests(SignElectricTestCase):
         response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay(page.width, page.height)})
 
         signed = pymupdf.open(stream=response.content, filetype='pdf')
-        self.assertEqual(signed.page_count, 2)
+        self.assertEqual(signed.page_count, 1)
         self.assertAlmostEqual(signed[0].rect.width, to_points(page.width), delta=1)
 
     def test_export_without_overlay_is_rejected(self):
@@ -1214,10 +1213,6 @@ class RequireLoginTests(SignElectricTestCase):
 
 
 class AuditTrailTests(SignElectricTestCase):
-    def record_text(self, pdf_bytes):
-        signed = pymupdf.open(stream=pdf_bytes, filetype='pdf')
-        return signed[signed.page_count - 1].get_text()
-
     def test_upload_saves_the_fingerprint_and_an_event(self):
         self.upload(make_pdf())
         document = Document.objects.get()
@@ -1228,21 +1223,14 @@ class AuditTrailTests(SignElectricTestCase):
         self.assertEqual(document.events.get().text, 'Uploaded by boss (boss@example.com)')
         self.assertEqual(document.events.get().ip, '127.0.0.1')
 
-    def test_solo_pdf_ends_with_the_signing_record(self):
-        self.user.first_name = 'Ion'
-        self.user.last_name = 'Ștefănescu'
-        self.user.save()
+    def test_solo_pdf_has_only_the_document_pages(self):
         self.upload(make_png())
 
         response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
 
-        text = self.record_text(response.content)
-        document = Document.objects.get()
-        self.assertIn('Signing record', text)
-        self.assertIn(str(document.uid), text)
-        self.assertIn(document.original_hash, text)
-        self.assertIn('Signed by Ion Ștefănescu (boss@example.com)', text)
-        self.assertIn('127.0.0.1', text)
+        signed = pymupdf.open(stream=response.content, filetype='pdf')
+        self.assertEqual(signed.page_count, 1)
+        self.assertNotIn('Signing record', signed[0].get_text())
 
     def test_multiple_signing_history(self):
         self.send([
@@ -1272,20 +1260,15 @@ class AuditTrailTests(SignElectricTestCase):
             'Signed by everyone',
         ])
 
-        response = self.client.get(f'/documents/{document.uid}/pdf/')
-        text = self.record_text(b''.join(response.streaming_content))
-        self.assertIn('Signed by everyone', text)
-        self.assertIn('ana@example.com', text)
-
-    def test_emailed_copy_has_the_record(self):
+    def test_emailed_copy_has_only_the_document_pages(self):
         self.send([placeholder('Ana', 'ana@example.com')])
         ana = Signer.objects.get()
         mail.outbox = []
 
         self.client_class().post(f'/sign/{ana.token}/')
 
-        text = self.record_text(mail.outbox[0].attachments[0].content)
-        self.assertIn('Signed by Ana (ana@example.com)', text)
+        signed = pymupdf.open(stream=mail.outbox[0].attachments[0].content, filetype='pdf')
+        self.assertEqual(signed.page_count, 1)
 
     def test_cancel_is_recorded(self):
         self.send([placeholder('Ana', 'ana@example.com')])
@@ -1304,18 +1287,6 @@ class AuditTrailTests(SignElectricTestCase):
 
         document = Document.objects.get()
         self.assertFalse(document.events.filter(text__startswith='Signed by Ana').exists())
-
-    def test_long_history_goes_on_more_pages(self):
-        self.upload(make_png())
-        document = Document.objects.get()
-        for number in range(30):
-            AuditEvent.objects.create(document=document, text=f'Event number {number}')
-
-        response = self.client.post(self.editor_url('export'), {'overlay_1': make_overlay()})
-
-        signed = pymupdf.open(stream=response.content, filetype='pdf')
-        self.assertEqual(signed.page_count, 3)
-        self.assertIn('Event number 29', signed[2].get_text())
 
 
 class UnitTests(TestCase):
@@ -2224,17 +2195,11 @@ class DeclineTests(SignElectricTestCase):
         self.assertContains(response, 'This document is not waiting for anyone to sign.')
         self.assertEqual(len(mail.outbox), 0)
 
-    def test_decline_is_in_the_signing_record(self):
+    def test_decline_is_saved_in_the_history(self):
         self.decline(self.ana, 'The price is wrong.')
 
         event = AuditEvent.objects.filter(document=self.document).last()
         self.assertEqual(event.text, 'Declined by Ana (ana@example.com). Reason: The price is wrong.')
-
-        response = self.client.get(f'/documents/{self.document.uid}/pdf/')
-        pdf = pymupdf.open(stream=b''.join(response.streaming_content), filetype='pdf')
-        text = pdf[-1].get_text()
-        self.assertIn('Status: Declined on', text)
-        self.assertIn('Declined by Ana', text)
 
     def test_decline_works_when_the_email_fails(self):
         with patch('documents.views.send_decline_notice', side_effect=OSError):

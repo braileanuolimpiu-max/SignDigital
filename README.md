@@ -23,9 +23,6 @@ image, sign it yourself, or send it to other people to sign by email.
   emails go to the same address at most once every 5 minutes
 - **Your name as the signature**: sign up asks for your first and last name, and Auto Place
   writes it when you sign a document yourself
-- **Signing record**: every PDF ends with a page that lists the document ID, a SHA-256
-  fingerprint of the original file, the signers and the full history (uploaded, sent,
-  opened, signed, declined, reminded, cancelled) with the time and IP address of each step
 - **Login limit**: after 5 wrong passwords, that username is locked for 15 minutes
 - **Cancel and delete**: cancel a document that is still waiting (its signing links stop
   working), or delete a document and its files for good
